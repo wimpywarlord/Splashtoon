@@ -31,7 +31,7 @@ const PET = {
   },
 };
 const PET_DRAW_H = 62;         // on-screen cell height (px) — smaller brush
-const IDLE_BASE_FACE = -1;     // which way the idle/neutral art faces (-1 = left); mirror otherwise
+const IDLE_BASE_FACE = 1;      // which way the idle/neutral art faces (1 = right); mirror otherwise
 const PET_ANCHOR_Y = 0.62;     // fraction of the cell aligned to the brush's floor point
 const TRAIL_W = 26;            // smooth paint-ribbon width (px)
 const petSheet = new Image();
@@ -82,6 +82,7 @@ const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, speed: 0, boost: fal
 
 // Active powerups on the board, and a monotonic clock used for animation/emotes.
 let powerups = [];
+let impacts = [];          // missile-shower craters being animated: [{x,y,r,slot,start}]
 let nowMs = 0;
 
 // Paint layer at grid resolution (1px per cell), scaled up on draw.
@@ -123,6 +124,7 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
+      impacts = [];
       applySnapshot(msg.cells);
       applyPlayers(msg.players, true);
       hide(els.results);
@@ -144,6 +146,15 @@ function handle(msg) {
       // Pickup celebration (wiggle + sparkles) for whoever grabbed a powerup.
       const target = msg.id === myId ? me : remote.get(msg.id);
       if (target) target.emoteUntil = nowMs + EMOTE_MS;
+      break;
+    }
+    case 'impact': {
+      // Missile crater: stamp a solid disc onto the paint layer + animate a boom.
+      if (paintCtx && palette[msg.slot]) {
+        paintCtx.fillStyle = palette[msg.slot];
+        paintCtx.beginPath(); paintCtx.arc(msg.x, msg.y, msg.r, 0, Math.PI * 2); paintCtx.fill();
+      }
+      impacts.push({ x: msg.x, y: msg.y, r: msg.r, slot: msg.slot, start: nowMs });
       break;
     }
     case 'roundover': {
@@ -506,9 +517,10 @@ function drawBrushSprite(x, y, slot, face, speed, isMe, boost, frozen, noPaint, 
 
 // Supercell-style powerup badges: bold rounded gem, gradient, thick outline, sheen.
 const POWERUP_STYLE = {
-  speed:  { a: '#ffe48a', b: '#ff9d2f', ring: '#6e3d00', sym: 'bolt' },
-  freeze: { a: '#d6f3ff', b: '#37a8ff', ring: '#0f4a78', sym: 'snow' },
-  inkjam: { a: '#ffc6e4', b: '#ff3da5', ring: '#7a1147', sym: 'noink' },
+  speed:   { a: '#ffe48a', b: '#ff9d2f', ring: '#6e3d00', sym: 'bolt' },
+  freeze:  { a: '#d6f3ff', b: '#37a8ff', ring: '#0f4a78', sym: 'snow' },
+  inkjam:  { a: '#ffc6e4', b: '#ff3da5', ring: '#7a1147', sym: 'noink' },
+  missile: { a: '#ffd0b0', b: '#ff5a3c', ring: '#7a2410', sym: 'missile' },
 };
 
 function roundRect(x, y, w, h, r) {
@@ -549,6 +561,21 @@ function drawSymbol(sym, cx, cy, r) {
     ctx.closePath(); ctx.lineWidth = 2.4; ctx.fill(); ctx.stroke();
     ctx.strokeStyle = '#e23b3b'; ctx.lineWidth = 3.4;
     ctx.beginPath(); ctx.moveTo(-r, -r); ctx.lineTo(r, r); ctx.stroke();
+  } else if (sym === 'missile') {
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();                       // rocket body + nose
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r * 0.42, -r * 0.2);
+    ctx.lineTo(r * 0.42, r * 0.5);
+    ctx.lineTo(-r * 0.42, r * 0.5);
+    ctx.lineTo(-r * 0.42, -r * 0.2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath();                       // fins
+    ctx.moveTo(r * 0.42, r * 0.15); ctx.lineTo(r * 0.78, r * 0.58); ctx.lineTo(r * 0.42, r * 0.5);
+    ctx.moveTo(-r * 0.42, r * 0.15); ctx.lineTo(-r * 0.78, r * 0.58); ctx.lineTo(-r * 0.42, r * 0.5);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#7ad0ff';             // window
+    ctx.beginPath(); ctx.arc(0, -r * 0.08, r * 0.2, 0, Math.PI * 2); ctx.fill();
   }
   ctx.restore();
 }
@@ -584,6 +611,20 @@ function render() {
   if (paintLayer) ctx.drawImage(paintLayer, 0, 0);  // 1:1, world-resolution
 
   for (const pu of powerups) drawPowerup(pu);
+
+  // Missile-impact shockwaves (expanding white ring) over the fresh craters.
+  if (impacts.length) {
+    for (const im of impacts) {
+      const age = (nowMs - im.start) / 450;
+      if (age >= 1) continue;
+      ctx.save();
+      ctx.globalAlpha = (1 - age) * 0.85;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(im.x, im.y, im.r * (0.55 + age * 1.2), 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+    impacts = impacts.filter((im) => nowMs - im.start < 450);
+  }
 
   // Collect actors and depth-sort by y (lower draws on top).
   const actors = [];

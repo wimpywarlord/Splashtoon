@@ -50,9 +50,14 @@ const BOOST_MULT = 1.8;          // multiplier on MAX_SPEED and ACCEL while boos
 const FREEZE_MS = 1_800;         // how long rivals are frozen in place
 const INKJAM_MS = 3_500;         // how long rivals can't lay paint
 
-// The original Battle Painters items: speed up your brush, stop other players,
-// prevent others from distributing paint.
-const POWERUP_TYPES = ['speed', 'freeze', 'inkjam'];
+// Missile shower: grabbing it rains craters of YOUR paint at random spots.
+const MISSILE_COUNT = 9;
+const MISSILE_DELAY_MS = 250;    // delay before the first impact
+const MISSILE_INTERVAL_MS = 110; // stagger between impacts
+const CRATER_R = 36;             // crater paint radius (px)
+
+// Battle Painters items (speed / freeze / inkjam) + a missile-shower extra.
+const POWERUP_TYPES = ['speed', 'freeze', 'inkjam', 'missile'];
 
 // 8 distinct, high-contrast brush colors indexed by slot.
 const PALETTE = [
@@ -97,6 +102,7 @@ let lastWinnerSlot = -1;
 let powerups = [];         // [{id, x, y, type}]
 let nextPowerupId = 1;
 let lastSpawnAt = 0;
+let pendingImpacts = [];   // queued missile-shower craters: [{at, x, y, slot}]
 
 class Player {
   constructor(id, ws) {
@@ -178,11 +184,11 @@ function paintCell(cx, cy, slot) {
   changed.add(idx);
 }
 
-// Stamp a filled disc of cells centered at world coords (wx, wy).
-function stampDisc(wx, wy, slot) {
+// Paint a filled disc of cells (radius rPx) centered at world coords (wx, wy).
+function fillDisc(wx, wy, rPx, slot) {
   const ccx = wx / CELL;
   const ccy = wy / CELL;
-  const rc = BRUSH_R / CELL;
+  const rc = rPx / CELL;
   const r2 = rc * rc;
   const minX = Math.floor(ccx - rc);
   const maxX = Math.ceil(ccx + rc);
@@ -195,6 +201,11 @@ function stampDisc(wx, wy, slot) {
       if (dx * dx + dy * dy <= r2) paintCell(cx, cy, slot);
     }
   }
+}
+
+// The brush stamps a disc of radius BRUSH_R as it moves.
+function stampDisc(wx, wy, slot) {
+  fillDisc(wx, wy, BRUSH_R, slot);
 }
 
 // Stamp along the segment prev->cur so fast movement leaves no gaps.
@@ -276,7 +287,32 @@ function applyPowerup(p, type, t) {
       if (type === 'freeze') o.frozenUntil = t + FREEZE_MS;
       else o.noPaintUntil = t + INKJAM_MS;
     }
+  } else if (type === 'missile') {
+    const m = 60;
+    for (let i = 0; i < MISSILE_COUNT; i++) {
+      pendingImpacts.push({
+        at: t + MISSILE_DELAY_MS + i * MISSILE_INTERVAL_MS,
+        x: Math.round(m + Math.random() * (WORLD_W - 2 * m)),
+        y: Math.round(m + Math.random() * (WORLD_H - 2 * m)),
+        slot: p.slot,
+      });
+    }
   }
+}
+
+// Land any missile craters whose time has come (paints + broadcasts each impact).
+function processImpacts(t) {
+  if (!pendingImpacts.length) return;
+  const remain = [];
+  for (const im of pendingImpacts) {
+    if (t >= im.at) {
+      fillDisc(im.x, im.y, CRATER_R, im.slot);
+      broadcast({ t: 'impact', x: im.x, y: im.y, slot: im.slot, r: CRATER_R });
+    } else {
+      remain.push(im);
+    }
+  }
+  pendingImpacts = remain;
 }
 
 function updatePowerups(t) {
@@ -308,6 +344,7 @@ function startRound() {
   scores.fill(0);
   changed.clear();
   powerups = [];
+  pendingImpacts = [];
   lastSpawnAt = now();
   spawnWaitingSpectators();
   for (const p of players.values()) {
@@ -359,6 +396,7 @@ function tick() {
       if (p.slot >= 0) stepPlayer(p, dt);
     }
     updatePowerups(t);
+    processImpacts(t);
     if (t >= phaseEndsAt) {
       endRound();
     } else {
