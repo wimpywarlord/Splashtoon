@@ -621,8 +621,17 @@ function resize() {
   const vw = window.innerWidth, vh = window.innerHeight;
   let dw = vw, dh = vw / aspect;
   if (dh > vh) { dh = vh; dw = vh * aspect; }
-  canvas.style.width = `${Math.floor(dw)}px`;
-  canvas.style.height = `${Math.floor(dh)}px`;
+  dw = Math.floor(dw); dh = Math.floor(dh);
+  canvas.style.width = `${dw}px`;
+  canvas.style.height = `${dh}px`;
+  // Render at the physical pixel resolution so sprites stay crisp on retina /
+  // large windows instead of being upscaled from a fixed 1200x750 buffer.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(dw * dpr);
+  canvas.height = Math.round(dh * dpr);
+  ctx.setTransform(canvas.width / G.worldW, 0, 0, canvas.height / G.worldH, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   // Anchor the HUD to the board rect so the timer/leaderboard hug the canvas.
   requestAnimationFrame(() => {
     const r = canvas.getBoundingClientRect();
