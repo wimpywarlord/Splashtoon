@@ -31,6 +31,7 @@ const PET = {
   },
 };
 const PET_DRAW_H = 62;         // on-screen cell height (px) — smaller brush
+const IDLE_BASE_FACE = -1;     // which way the idle/neutral art faces (-1 = left); mirror otherwise
 const PET_ANCHOR_Y = 0.62;     // fraction of the cell aligned to the brush's floor point
 const TRAIL_W = 26;            // smooth paint-ribbon width (px)
 const petSheet = new Image();
@@ -77,7 +78,7 @@ let scores = [];
 const remote = new Map();
 
 // Own predicted brush.
-const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, speed: 0, boost: false, emoteUntil: 0 };
+const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, speed: 0, boost: false, frozen: false, noPaint: false, emoteUntil: 0 };
 
 // Active powerups on the board, and a monotonic clock used for animation/emotes.
 let powerups = [];
@@ -165,6 +166,8 @@ function applyPlayers(list, snap) {
       foundMe = true;
       mySlot = pl.slot;
       me.boost = !!pl.boost;
+      me.frozen = !!pl.frozen;
+      me.noPaint = !!pl.noPaint;
       if (!me.has) {            // first authoritative position -> adopt it
         me.x = pl.x; me.y = pl.y; me.vx = 0; me.vy = 0; me.has = true; me.lastPaintX = undefined;
       } else if (snap) {        // round reset -> snap to spawn
@@ -181,6 +184,8 @@ function applyPlayers(list, snap) {
     }
     r.slot = pl.slot;
     r.boost = !!pl.boost;
+    r.frozen = !!pl.frozen;
+    r.noPaint = !!pl.noPaint;
     // Estimate speed + left/right facing from server position deltas.
     const dx = pl.x - r.tx, dy = pl.y - r.ty;
     r.speed = snap ? 0 : Math.hypot(dx, dy) * 30;   // ~px/s at the 30Hz tick
@@ -253,6 +258,7 @@ function paintTrails() {
 
 function strokeSeg(b, slot, cx, cy) {
   if (b.lastPaintX === undefined) { b.lastPaintX = cx; b.lastPaintY = cy; return; }
+  if (b.noPaint) { b.lastPaintX = cx; b.lastPaintY = cy; return; }   // ink-jammed: no paint
   const dx = cx - b.lastPaintX, dy = cy - b.lastPaintY;
   const d2 = dx * dx + dy * dy;
   if (d2 < 0.4) return;
@@ -319,6 +325,11 @@ window.addEventListener('blur', () => { held.clear(); pushInput(); });
 // ---- Prediction + interpolation --------------------------------------------
 function predict(dt) {
   if (!me.has) return;
+  if (me.frozen) {                      // frozen by a rival: locked in place
+    me.vx = 0; me.vy = 0; me.speed = 0;
+    if (me.serverX !== undefined) { me.x += (me.serverX - me.x) * 0.2; me.y += (me.serverY - me.y) * 0.2; }
+    return;
+  }
   const { mx, my } = currentInput();
   if (mx || my) {
     const len = Math.hypot(mx, my);   // normalize so diagonals aren't faster
@@ -411,7 +422,7 @@ function petState(speed, face, emoteT) {
 }
 
 // Draw an animated brush-pet sprite, recolored to the player, with glow + FX.
-function drawBrushSprite(x, y, slot, face, speed, isMe, boost, emoteT) {
+function drawBrushSprite(x, y, slot, face, speed, isMe, boost, frozen, noPaint, emoteT) {
   const col = palette[slot] || '#fff';
 
   // Boost aura.
@@ -441,13 +452,18 @@ function drawBrushSprite(x, y, slot, face, speed, isMe, boost, emoteT) {
     return;
   }
 
-  const st = PET.states[petState(speed, face, emoteT)];
+  const state = petState(speed, face, emoteT);
+  const st = PET.states[state];
   const frame = Math.floor(nowMs / st.rate) % st.frames;
   const sx = frame * PET.cellW, sy = st.row * PET.cellH;
   const scale = PET_DRAW_H / PET.cellH;
   let pop = 1;
   if (nowMs < emoteT) pop = 1 + 0.12 * ((emoteT - nowMs) / EMOTE_MS);
   const dw = PET.cellW * scale * pop, dh = PET.cellH * scale * pop;
+  // The run rows already face left/right. Non-directional states (idle, jumping)
+  // mirror to the LAST horizontal facing so a stopped brush keeps facing that way.
+  const directional = state === 'running-right' || state === 'running-left';
+  const flipX = (!directional && face !== IDLE_BASE_FACE) ? -1 : 1;
   // "Painting" wobble: rock the brush around its bristle/floor point so the
   // bristles sweep side-to-side like real brushing (faster while moving).
   const amp = speed > MOVE_EPS ? 0.16 : 0.06;
@@ -455,8 +471,24 @@ function drawBrushSprite(x, y, slot, face, speed, isMe, boost, emoteT) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(wobble);
+  ctx.scale(flipX, 1);
   ctx.drawImage(ts, sx, sy, PET.cellW, PET.cellH, -dw / 2, -dh * PET_ANCHOR_Y, dw, dh);
   ctx.restore();
+
+  // Status overlays from rivals' powerups.
+  if (frozen) {
+    ctx.save();
+    ctx.globalAlpha = 0.42; ctx.fillStyle = '#bfefff';
+    ctx.beginPath(); ctx.ellipse(x, y - 14, 23, 27, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    drawSymbol('snow', x, y - 46, 9);
+  } else if (noPaint) {
+    ctx.save();
+    ctx.globalAlpha = 0.34; ctx.fillStyle = '#9aa0aa';
+    ctx.beginPath(); ctx.ellipse(x, y - 14, 21, 25, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    drawSymbol('noink', x, y - 46, 9);
+  }
 
   // Pickup sparkles.
   if (nowMs < emoteT) {
@@ -472,30 +504,76 @@ function drawBrushSprite(x, y, slot, face, speed, isMe, boost, emoteT) {
   }
 }
 
-function drawPowerup(pu) {
-  const { x, y } = pu;
-  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 180);
-  const r = 13 + pulse * 3;
-  ctx.save();
-  ctx.globalAlpha = 0.3 + 0.25 * pulse;     // glow
-  ctx.fillStyle = '#ffd23f';
-  ctx.beginPath(); ctx.arc(x, y, r + 11, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-  ctx.save();
-  ctx.fillStyle = '#ffe066';                // coin
-  ctx.strokeStyle = '#7a5b00'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  const s = r * 0.95;                        // lightning bolt
-  ctx.fillStyle = '#4a3500';
+// Supercell-style powerup badges: bold rounded gem, gradient, thick outline, sheen.
+const POWERUP_STYLE = {
+  speed:  { a: '#ffe48a', b: '#ff9d2f', ring: '#6e3d00', sym: 'bolt' },
+  freeze: { a: '#d6f3ff', b: '#37a8ff', ring: '#0f4a78', sym: 'snow' },
+  inkjam: { a: '#ffc6e4', b: '#ff3da5', ring: '#7a1147', sym: 'noink' },
+};
+
+function roundRect(x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x + s * 0.12, y - s * 0.62);
-  ctx.lineTo(x - s * 0.36, y + s * 0.08);
-  ctx.lineTo(x - s * 0.02, y + s * 0.08);
-  ctx.lineTo(x - s * 0.14, y + s * 0.62);
-  ctx.lineTo(x + s * 0.38, y - s * 0.14);
-  ctx.lineTo(x + s * 0.02, y - s * 0.14);
-  ctx.closePath(); ctx.fill();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// Bold white symbol (dark edge) centered at (cx,cy), scale r.
+function drawSymbol(sym, cx, cy, r) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.fillStyle = '#fff';
+  if (sym === 'bolt') {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.18, -r * 0.85); ctx.lineTo(-r * 0.5, r * 0.12); ctx.lineTo(-r * 0.04, r * 0.12);
+    ctx.lineTo(-r * 0.22, r * 0.85); ctx.lineTo(r * 0.55, -r * 0.18); ctx.lineTo(r * 0.04, -r * 0.18);
+    ctx.closePath(); ctx.lineWidth = 3; ctx.stroke(); ctx.fill();
+  } else if (sym === 'snow') {
+    ctx.lineWidth = 3.2;
+    for (let i = 0; i < 3; i++) {
+      ctx.save(); ctx.rotate(i * Math.PI / 3);
+      ctx.beginPath(); ctx.moveTo(0, -r * 0.95); ctx.lineTo(0, r * 0.95); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -r * 0.55); ctx.lineTo(-r * 0.3, -r * 0.82);
+      ctx.moveTo(0, -r * 0.55); ctx.lineTo(r * 0.3, -r * 0.82); ctx.stroke();
+      ctx.restore();
+    }
+  } else if (sym === 'noink') {
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.85);
+    ctx.quadraticCurveTo(r * 0.72, r * 0.2, 0, r * 0.72);
+    ctx.quadraticCurveTo(-r * 0.72, r * 0.2, 0, -r * 0.85);
+    ctx.closePath(); ctx.lineWidth = 2.4; ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#e23b3b'; ctx.lineWidth = 3.4;
+    ctx.beginPath(); ctx.moveTo(-r, -r); ctx.lineTo(r, r); ctx.stroke();
+  }
   ctx.restore();
+}
+
+function drawPowerup(pu) {
+  const st = POWERUP_STYLE[pu.type] || POWERUP_STYLE.speed;
+  const bob = Math.sin(nowMs / 320 + pu.id * 1.3) * 3;
+  const x = pu.x, y = pu.y + bob, s = 18;
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 260 + pu.id);
+
+  ctx.save();                              // outer glow
+  ctx.globalAlpha = 0.28 + 0.18 * pulse; ctx.fillStyle = st.b;
+  ctx.beginPath(); ctx.arc(x, y, s + 12, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  ctx.save();                              // gem badge
+  const g = ctx.createLinearGradient(x, y - s, x, y + s);
+  g.addColorStop(0, st.a); g.addColorStop(1, st.b);
+  ctx.fillStyle = g; ctx.strokeStyle = st.ring; ctx.lineWidth = 3.5; ctx.lineJoin = 'round';
+  roundRect(x - s, y - s, 2 * s, 2 * s, 9); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 0.4; ctx.fillStyle = '#fff';   // glossy sheen
+  roundRect(x - s + 4, y - s + 4, 2 * s - 8, s * 0.6, 6); ctx.fill();
+  ctx.restore();
+
+  drawSymbol(st.sym, x, y + 1, s * 0.62);
 }
 
 function render() {
@@ -510,13 +588,13 @@ function render() {
   // Collect actors and depth-sort by y (lower draws on top).
   const actors = [];
   for (const r of remote.values()) {
-    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, speed: r.speed, isMe: false, boost: r.boost, emoteT: r.emoteUntil });
+    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, speed: r.speed, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, emoteT: r.emoteUntil });
   }
   if (me.has && !spectating) {
-    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, speed: me.speed, isMe: true, boost: me.boost, emoteT: me.emoteUntil });
+    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, speed: me.speed, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint, emoteT: me.emoteUntil });
   }
   actors.sort((a, b) => a.y - b.y);
-  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.speed, a.isMe, a.boost, a.emoteT);
+  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.emoteT);
 }
 
 // ---- HUD --------------------------------------------------------------------

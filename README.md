@@ -10,6 +10,9 @@ no names — just open the page and play.
   have **momentum** — they accelerate, coast when you release, and arc when you turn.
 - **Painting:** every brush can paint over *anyone's* territory ("steal freely"),
   so the lead swings until the buzzer.
+- **Powerups** (the original Battle Painters set): **Speed** (boost your brush),
+  **Freeze** (stop every rival in place), **Ink Jam** (rivals can't lay paint).
+  They spawn periodically as Supercell-style gem pickups.
 - **Joining:** new players **spectate the live board** and auto-spawn into a color
   slot at the start of the next round. Up to **8** players per round.
 - **Server is authoritative:** it owns the grid, positions, and scores. Clients only

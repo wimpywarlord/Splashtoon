@@ -47,6 +47,12 @@ const POWERUP_SPAWN_MS = 13_000;  // interval between spawn attempts
 const POWERUP_R = 18;            // pickup half-size (px)
 const BOOST_MS = 5_000;          // speed boost duration
 const BOOST_MULT = 1.8;          // multiplier on MAX_SPEED and ACCEL while boosted
+const FREEZE_MS = 1_800;         // how long rivals are frozen in place
+const INKJAM_MS = 3_500;         // how long rivals can't lay paint
+
+// The original Battle Painters items: speed up your brush, stop other players,
+// prevent others from distributing paint.
+const POWERUP_TYPES = ['speed', 'freeze', 'inkjam'];
 
 // 8 distinct, high-contrast brush colors indexed by slot.
 const PALETTE = [
@@ -104,6 +110,8 @@ class Player {
     this.mx = 0;           // held move vector (each axis -1/0/1; diagonals allowed)
     this.my = 0;
     this.boostUntil = 0;   // server-time (ms) the speed boost expires
+    this.frozenUntil = 0;  // can't move while frozen (rival grabbed Freeze)
+    this.noPaintUntil = 0; // can't paint while ink-jammed (rival grabbed Ink Jam)
     this.alive = true;
   }
   get spectating() {
@@ -137,6 +145,8 @@ function placeAtSpawn(p) {
   p.mx = 0;
   p.my = 0;
   p.boostUntil = 0;
+  p.frozenUntil = 0;
+  p.noPaintUntil = 0;
 }
 
 function assignSlot(p, slot) {
@@ -203,7 +213,9 @@ function paintPath(px, py, cx, cy, slot) {
 // Physics
 // ----------------------------------------------------------------------------
 function stepPlayer(p, dt) {
-  const boosted = now() < p.boostUntil;
+  const t = now();
+  if (t < p.frozenUntil) { p.vx = 0; p.vy = 0; return; }  // frozen: no move, no paint
+  const boosted = t < p.boostUntil;
   const accel = boosted ? ACCEL * BOOST_MULT : ACCEL;
   const maxSpeed = boosted ? MAX_SPEED * BOOST_MULT : MAX_SPEED;
 
@@ -239,6 +251,7 @@ function stepPlayer(p, dt) {
   if (p.y < BRUSH_R) { p.y = BRUSH_R; if (p.vy < 0) p.vy = 0; }
   if (p.y > WORLD_H - BRUSH_R) { p.y = WORLD_H - BRUSH_R; if (p.vy > 0) p.vy = 0; }
 
+  if (t < p.noPaintUntil) return;   // ink-jammed: moves but lays no paint
   paintPath(px, py, p.x, p.y, p.slot);
 }
 
@@ -249,7 +262,21 @@ function spawnPowerup() {
   const margin = 90;
   const x = margin + Math.random() * (WORLD_W - 2 * margin);
   const y = margin + Math.random() * (WORLD_H - 2 * margin);
-  powerups.push({ id: nextPowerupId++, x: Math.round(x), y: Math.round(y), type: 'speed' });
+  const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+  powerups.push({ id: nextPowerupId++, x: Math.round(x), y: Math.round(y), type });
+}
+
+// Apply a grabbed powerup. Speed buffs the grabber; freeze/inkjam debuff rivals.
+function applyPowerup(p, type, t) {
+  if (type === 'speed') {
+    p.boostUntil = t + BOOST_MS;
+  } else if (type === 'freeze' || type === 'inkjam') {
+    for (const o of players.values()) {
+      if (o.slot < 0 || o === p) continue;
+      if (type === 'freeze') o.frozenUntil = t + FREEZE_MS;
+      else o.noPaintUntil = t + INKJAM_MS;
+    }
+  }
 }
 
 function updatePowerups(t) {
@@ -266,7 +293,7 @@ function updatePowerups(t) {
       const pu = powerups[i];
       if (Math.hypot(p.x - pu.x, p.y - pu.y) <= reach) {
         powerups.splice(i, 1);
-        p.boostUntil = t + BOOST_MS;
+        applyPowerup(p, pu.type, t);
         broadcast({ t: 'pickup', id: p.id, slot: p.slot, type: pu.type });
       }
     }
@@ -372,6 +399,8 @@ function playerList() {
         x: Math.round(p.x),
         y: Math.round(p.y),
         boost: t < p.boostUntil,
+        frozen: t < p.frozenUntil,
+        noPaint: t < p.noPaintUntil,
       });
     }
   }
