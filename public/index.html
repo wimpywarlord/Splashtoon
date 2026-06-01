@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Splashtoon</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game" width="1200" height="750"></canvas>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div id="timer">1:30</div>
+      <div id="scoreboard"></div>
+    </div>
+
+    <!-- Spectator banner -->
+    <div id="spectate" class="overlay hidden">
+      <div class="card">
+        <div class="big">SPECTATING</div>
+        <div class="sub">Joining next round…</div>
+      </div>
+    </div>
+
+    <!-- Round-over results -->
+    <div id="results" class="overlay hidden">
+      <div class="card">
+        <div id="result-title" class="big">ROUND OVER</div>
+        <div id="result-list"></div>
+        <div class="sub">Next round in <span id="next-countdown">6</span>s</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/client.js"></script>
+</body>
+</html>
