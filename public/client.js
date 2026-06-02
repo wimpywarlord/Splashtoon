@@ -24,7 +24,7 @@ const PET = {
     'idle':             { row: 0, frames: 6, rate: 170 },
     'running-right':    { row: 1, frames: 7, rate: 70 },
     'running-left':     { row: 2, frames: 7, rate: 70 },
-    'speed':            { row: 3, frames: 1, rate: 170 },
+    'speed':            { row: 3, frames: 4, rate: 190 },
     'drift':            { row: 0, frames: 6, rate: 150 },
     'freeze-cast':      { row: 4, frames: 6, rate: 90 },
     'frozen-disabled':  { row: 5, frames: 6, rate: 120 },

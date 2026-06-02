@@ -37,6 +37,7 @@ const DAMPING_PER_SEC = 4.0;     // higher = snappier stop, less drift
 
 const BRUSH_R = 16;              // px paint radius
 const STAMP_STEP = BRUSH_R / 2;  // segment stamp spacing to avoid gaps at speed
+const MIN_PAINT_MOVE2 = 0.4;     // do not paint idle spawn/standstill ticks
 
 const ROUND_MS = 120_000;
 const INTERMISSION_MS = 10_000;
@@ -231,7 +232,7 @@ function recordPaintStroke(px, py, cx, cy, slot) {
   const dx = cx - px;
   const dy = cy - py;
   const d2 = dx * dx + dy * dy;
-  if (d2 < 0.4 || d2 >= 90 * 90) return;
+  if (d2 < MIN_PAINT_MOVE2 || d2 >= 90 * 90) return;
   visualPaintEvents.push({
     t: 'stroke',
     slot,
@@ -323,6 +324,9 @@ function stepPlayer(p, dt) {
   if (p.y > WORLD_H - BRUSH_R) { p.y = WORLD_H - BRUSH_R; if (p.vy > 0) p.vy = 0; }
 
   if (t < p.noPaintUntil) return;   // ink-jammed: moves but lays no paint
+  const pdx = p.x - px;
+  const pdy = p.y - py;
+  if (pdx * pdx + pdy * pdy < MIN_PAINT_MOVE2) return;
   recordPaintStroke(px, py, p.x, p.y, p.slot);
   paintPath(px, py, p.x, p.y, p.slot);
 }
@@ -343,13 +347,17 @@ function spawnPowerup() {
 function applyPowerup(p, type, t) {
   if (type === 'speed') {
     p.boostUntil = t + BOOST_MS;
-  } else if (type === 'freeze' || type === 'inkjam') {
+  } else if (type === 'freeze') {
     p.castType = type;
     p.castUntil = t + POWERUP_EFFECT_MS;
     for (const o of players.values()) {
       if (o.slot < 0 || o === p) continue;
-      if (type === 'freeze') o.frozenUntil = t + FREEZE_MS;
-      else o.noPaintUntil = t + INKJAM_MS;
+      o.frozenUntil = t + FREEZE_MS;
+    }
+  } else if (type === 'inkjam') {
+    for (const o of players.values()) {
+      if (o.slot < 0 || o === p) continue;
+      o.noPaintUntil = t + INKJAM_MS;
     }
   } else if (type === 'missile') {
     p.castType = type;
