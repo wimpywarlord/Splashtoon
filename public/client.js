@@ -546,11 +546,12 @@ function getTintedSheet(slot) {
 }
 
 function petState(speed, boost, frozen, noPaint, castType, inputActive) {
+  const moving = !!inputActive;
   if (frozen) return 'frozen-disabled';
-  if (noPaint) return 'inkjam-disabled';
-  if (castType === 'freeze') return 'freeze-cast';
-  if (castType === 'missile') return 'missile-cast';
-  if (boost) return 'speed';
+  if (noPaint) return moving ? 'inkjam-disabled' : 'inkjam-disabled-idle';
+  if (castType === 'freeze') return moving ? 'freeze-cast' : 'freeze-idle';
+  if (castType === 'missile') return moving ? 'missile-cast' : 'missile-idle';
+  if (boost) return moving ? 'speed' : 'speed-idle';
   if (!inputActive && speed > DRIFT_EPS) return 'drift';
   if (speed > MOVE_EPS) return 'running-right';
   return 'idle';
@@ -562,6 +563,7 @@ function brushPose(state, face, dirAngle) {
     state === 'running-left' ||
     state === 'speed' ||
     state === 'freeze-cast' ||
+    state === 'inkjam-disabled' ||
     state === 'missile-cast';
   if (!directional) return { rowState: state, flipX: 1, directional: false };
 
@@ -592,7 +594,7 @@ function drawGroundShadow(x, y, rx, ry, alpha = 0.32) {
 // Draw the in-game brush spirit. The atlas owns pose; runtime only selects a
 // row and mirrors speed-left. Do not rotate brush sprites to fake direction.
 function spriteDrawHeight(state) {
-  if (state === 'idle') return PET_IDLE_DRAW_H;
+  if (state === 'idle' || state.endsWith('-idle')) return PET_IDLE_DRAW_H;
   if (state === 'drift') return PET_DRIFT_DRAW_H;
   return PET_DRAW_H;
 }
@@ -622,7 +624,7 @@ function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen,
   }
 
   const frame = Math.floor(nowMs / st.rate) % st.frames;
-  const sx = frame * PET.cellW, sy = rowSt.row * PET.cellH;
+  const sx = ((rowSt.col || 0) + frame) * PET.cellW, sy = rowSt.row * PET.cellH;
   const dw = PET.cellW * (drawH / PET.cellH);
   const dh = drawH;
   ctx.save();
