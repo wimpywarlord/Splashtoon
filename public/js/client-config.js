@@ -25,7 +25,6 @@
         'drift': { row: 0, frames: 6, rate: 150 },
         'freeze-cast': { row: 4, frames: 6, rate: 90 },
         'frozen-disabled': { row: 5, frames: 6, rate: 120 },
-        'inkjam-cast': { row: 6, frames: 7, rate: 90 },
         'missile-cast': { row: 7, frames: 6, rate: 75 },
         'inkjam-disabled': { row: 8, frames: 6, rate: 120 },
       },

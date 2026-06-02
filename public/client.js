@@ -549,7 +549,6 @@ function petState(speed, boost, frozen, noPaint, castType, inputActive) {
   if (frozen) return 'frozen-disabled';
   if (noPaint) return 'inkjam-disabled';
   if (castType === 'freeze') return 'freeze-cast';
-  if (castType === 'inkjam') return 'inkjam-cast';
   if (castType === 'missile') return 'missile-cast';
   if (boost) return 'speed';
   if (!inputActive && speed > DRIFT_EPS) return 'drift';
@@ -563,7 +562,6 @@ function brushPose(state, face, dirAngle) {
     state === 'running-left' ||
     state === 'speed' ||
     state === 'freeze-cast' ||
-    state === 'inkjam-cast' ||
     state === 'missile-cast';
   if (!directional) return { rowState: state, flipX: 1, directional: false };
 
