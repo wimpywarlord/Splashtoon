@@ -6,7 +6,7 @@ These instructions apply to the whole repository.
 
 - Keep gameplay authority on the server. Clients send input and render; `server.js` owns positions, power-up timing, scoring, round state, and effects that change game state.
 - Keep renderer behavior deterministic and small. Sprite sheets should encode poses; canvas code may choose a row or mirror a sprite, but must not rotate brush sprites to fake direction.
-- Keep authoritative paint snapshots separate from live paint strokes. Snapshots should be grid-derived with bounded smoothing; only live brush motion should use the wider rounded ribbon treatment.
+- Keep authoritative score-grid data separate from visual paint history. Refresh/spectator views should replay server-recorded visual paint events; the coarse score grid is only a fallback and should never be the normal source for smooth trails.
 - Prefer named constants for balance and timing. Do not bury durations, radii, speeds, or animation timings inside loops or render code.
 - Keep unrelated refactors out of gameplay changes. If a request touches sprites, power-ups, or timing, scope the edit to that surface unless a small cleanup directly reduces risk.
 - Do not add fallback placeholder art that differs from final art. If an asset has not loaded, skip drawing it instead of drawing temporary circles, boxes, or vector substitutes.

@@ -1,7 +1,7 @@
 {
   "name": "splashtoon",
   "version": "1.0.0",
-  "description": "Multiplayer paint .io game — most area painted in 90s wins.",
+  "description": "Multiplayer paint .io game — most area painted in 120s wins.",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js"

@@ -42,19 +42,20 @@ const ROUND_MS = 120_000;
 const INTERMISSION_MS = 10_000;
 
 // Powerups.
+const POWERUP_EFFECT_MS = 4_000;   // duration for active super-power effects
 const POWERUP_MAX = 2;            // max simultaneous pickups on the board
 const POWERUP_SPAWN_MS = 13_000;  // interval between spawn attempts
 const POWERUP_TTL_MS = 6_000;     // unclaimed pickup lifetime
 const POWERUP_R = 18;            // pickup half-size (px)
-const BOOST_MS = 5_000;          // speed boost duration
+const BOOST_MS = POWERUP_EFFECT_MS; // speed boost duration
 const BOOST_MULT = 1.8;          // multiplier on MAX_SPEED and ACCEL while boosted
-const FREEZE_MS = 1_800;         // how long rivals are frozen in place
-const INKJAM_MS = 3_500;         // how long rivals can't lay paint
+const FREEZE_MS = POWERUP_EFFECT_MS; // how long rivals are frozen in place
+const INKJAM_MS = POWERUP_EFFECT_MS; // how long rivals can't lay paint
 
-// Missile shower: grabbing it rains craters of YOUR paint at random spots.
-const MISSILE_COUNT = 9;
-const MISSILE_DELAY_MS = 250;    // delay before the first impact
-const MISSILE_INTERVAL_MS = 110; // stagger between impacts
+// Meteor shower: grabbing it rains splattery bursts of YOUR paint at random spots.
+const MISSILE_COUNT = 12;
+const MISSILE_DELAY_MS = 200;    // delay before the first impact
+const MISSILE_INTERVAL_MS = Math.floor((POWERUP_EFFECT_MS - MISSILE_DELAY_MS) / (MISSILE_COUNT - 1));
 const CRATER_R = 36;             // crater paint radius (px)
 
 // Battle Painters items (speed / freeze / inkjam) + a missile-shower extra.
@@ -103,7 +104,8 @@ let lastWinnerSlot = -1;
 let powerups = [];         // [{id, x, y, type}]
 let nextPowerupId = 1;
 let lastSpawnAt = 0;
-let pendingImpacts = [];   // queued missile-shower craters: [{at, x, y, slot}]
+let pendingImpacts = [];   // queued meteor-shower splatters: [{at, x, y, slot}]
+let visualPaintEvents = []; // round-local high-res paint replay for refresh/spectate
 
 class Player {
   constructor(id, ws) {
@@ -119,6 +121,8 @@ class Player {
     this.boostUntil = 0;   // server-time (ms) the speed boost expires
     this.frozenUntil = 0;  // can't move while frozen (rival grabbed Freeze)
     this.noPaintUntil = 0; // can't paint while ink-jammed (rival grabbed Ink Jam)
+    this.castType = null;  // active self-cast sprite state, e.g. meteor shower
+    this.castUntil = 0;
     this.alive = true;
   }
   get spectating() {
@@ -154,6 +158,8 @@ function placeAtSpawn(p) {
   p.boostUntil = 0;
   p.frozenUntil = 0;
   p.noPaintUntil = 0;
+  p.castType = null;
+  p.castUntil = 0;
 }
 
 function assignSlot(p, slot) {
@@ -221,6 +227,59 @@ function paintPath(px, py, cx, cy, slot) {
   }
 }
 
+function recordPaintStroke(px, py, cx, cy, slot) {
+  const dx = cx - px;
+  const dy = cy - py;
+  const d2 = dx * dx + dy * dy;
+  if (d2 < 0.4 || d2 >= 90 * 90) return;
+  visualPaintEvents.push({
+    t: 'stroke',
+    slot,
+    x1: Math.round(px),
+    y1: Math.round(py),
+    x2: Math.round(cx),
+    y2: Math.round(cy),
+  });
+}
+
+function makePaintSplatter(x, y, rPx) {
+  const blobs = [{
+    x: Math.round(x),
+    y: Math.round(y),
+    r: Math.round(rPx * 0.56),
+  }];
+  const droplets = 10 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < droplets; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = rPx * (0.18 + Math.random() * 0.95);
+    const br = rPx * (0.08 + Math.random() * 0.19);
+    blobs.push({
+      x: Math.round(x + Math.cos(a) * d),
+      y: Math.round(y + Math.sin(a) * d),
+      r: Math.max(4, Math.round(br)),
+    });
+  }
+  const streaks = 2 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < streaks; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = rPx * (0.85 + Math.random() * 0.75);
+    blobs.push({
+      x: Math.round(x + Math.cos(a) * d),
+      y: Math.round(y + Math.sin(a) * d),
+      r: Math.max(3, Math.round(rPx * (0.05 + Math.random() * 0.08))),
+    });
+  }
+  return blobs;
+}
+
+function fillSplatter(blobs, slot) {
+  for (const b of blobs) fillDisc(b.x, b.y, b.r, slot);
+}
+
+function recordPaintSplatter(blobs, slot) {
+  visualPaintEvents.push({ t: 'splatter', slot, blobs });
+}
+
 // ----------------------------------------------------------------------------
 // Physics
 // ----------------------------------------------------------------------------
@@ -264,6 +323,7 @@ function stepPlayer(p, dt) {
   if (p.y > WORLD_H - BRUSH_R) { p.y = WORLD_H - BRUSH_R; if (p.vy > 0) p.vy = 0; }
 
   if (t < p.noPaintUntil) return;   // ink-jammed: moves but lays no paint
+  recordPaintStroke(px, py, p.x, p.y, p.slot);
   paintPath(px, py, p.x, p.y, p.slot);
 }
 
@@ -284,12 +344,16 @@ function applyPowerup(p, type, t) {
   if (type === 'speed') {
     p.boostUntil = t + BOOST_MS;
   } else if (type === 'freeze' || type === 'inkjam') {
+    p.castType = type;
+    p.castUntil = t + POWERUP_EFFECT_MS;
     for (const o of players.values()) {
       if (o.slot < 0 || o === p) continue;
       if (type === 'freeze') o.frozenUntil = t + FREEZE_MS;
       else o.noPaintUntil = t + INKJAM_MS;
     }
   } else if (type === 'missile') {
+    p.castType = type;
+    p.castUntil = t + POWERUP_EFFECT_MS;
     const m = 60;
     for (let i = 0; i < MISSILE_COUNT; i++) {
       pendingImpacts.push({
@@ -302,14 +366,16 @@ function applyPowerup(p, type, t) {
   }
 }
 
-// Land any missile craters whose time has come (paints + broadcasts each impact).
+// Land any meteor splatters whose time has come (paints + broadcasts each impact).
 function processImpacts(t) {
   if (!pendingImpacts.length) return;
   const remain = [];
   for (const im of pendingImpacts) {
     if (t >= im.at) {
-      fillDisc(im.x, im.y, CRATER_R, im.slot);
-      broadcast({ t: 'impact', x: im.x, y: im.y, slot: im.slot, r: CRATER_R });
+      const blobs = makePaintSplatter(im.x, im.y, CRATER_R);
+      fillSplatter(blobs, im.slot);
+      recordPaintSplatter(blobs, im.slot);
+      broadcast({ t: 'impact', x: im.x, y: im.y, slot: im.slot, r: CRATER_R, blobs });
     } else {
       remain.push(im);
     }
@@ -350,6 +416,7 @@ function startRound() {
   changed.clear();
   powerups = [];
   pendingImpacts = [];
+  visualPaintEvents = [];
   lastSpawnAt = now();
   spawnWaitingSpectators();
   for (const p of players.values()) {
@@ -436,6 +503,13 @@ function playerList() {
   const t = now();
   for (const p of players.values()) {
     if (p.slot >= 0) {
+      let castType = null;
+      if (t < p.castUntil) {
+        castType = p.castType;
+      } else if (p.castType) {
+        p.castType = null;
+        p.castUntil = 0;
+      }
       out.push({
         id: p.id,
         slot: p.slot,
@@ -444,6 +518,8 @@ function playerList() {
         boost: t < p.boostUntil,
         frozen: t < p.frozenUntil,
         noPaint: t < p.noPaintUntil,
+        castType,
+        inputActive: !!(p.mx || p.my),
       });
     }
   }
@@ -459,6 +535,7 @@ function roundStartMsg() {
     t: 'roundstart',
     cells: gridB64(),
     players: playerList(),
+    paintEvents: visualPaintEvents,
     scores: scoreArray(),
     powerups,
     timeLeftMs: timeLeftMs(),

@@ -24,17 +24,19 @@ const PET = {
     'idle':             { row: 0, frames: 6, rate: 170 },
     'running-right':    { row: 1, frames: 7, rate: 70 },
     'running-left':     { row: 2, frames: 7, rate: 70 },
-    'speed':            { row: 3, frames: 7, rate: 64 },
-    'drift':            { row: 1, frames: 7, rate: 118 },
+    'speed':            { row: 3, frames: 1, rate: 170 },
+    'drift':            { row: 0, frames: 6, rate: 150 },
     'freeze-cast':      { row: 4, frames: 6, rate: 90 },
     'frozen-disabled':  { row: 5, frames: 6, rate: 120 },
     'inkjam-cast':      { row: 6, frames: 7, rate: 90 },
     'missile-cast':     { row: 7, frames: 6, rate: 75 },
     'inkjam-disabled':  { row: 8, frames: 6, rate: 120 },
+    'inkjam-disabled-moving': { row: 6, frames: 7, rate: 110 },
   },
 };
 const PET_DRAW_H = 78;         // on-screen cell height (px)
-const PET_IDLE_DRAW_H = 64;    // idle should sit smaller than action states
+const PET_IDLE_DRAW_H = 66;    // idle should sit smaller than action states
+const PET_DRIFT_DRAW_H = 69;   // coasting state between action and full idle
 const PET_ANCHOR_Y = 0.62;     // fraction of the cell aligned to the brush's floor point
 const TRAIL_W = 26;            // smooth paint-ribbon width (px)
 const SNAPSHOT_STAMP_PX = 16;  // smooth spectator snapshots without bloating like live strokes
@@ -75,6 +77,9 @@ const els = {
   nextCountdown: document.getElementById('next-countdown'),
 };
 
+const stage = document.getElementById('stage');
+const stageFrame = document.getElementById('stage-frame');
+
 // ---- World / game state -----------------------------------------------------
 const G = {
   w: 120, h: 75, cell: 10,
@@ -94,11 +99,11 @@ let scores = [];
 const remote = new Map();
 
 // Own predicted brush.
-const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, dirAngle: 0, speed: 0, boost: false, frozen: false, noPaint: false };
+const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, dirAngle: 0, speed: 0, inputActive: false, boost: false, frozen: false, noPaint: false, castType: null };
 
 // Active powerups on the board, transient render effects, and animation clock.
 let powerups = [];
-let impacts = [];          // missile-shower craters being animated: [{x,y,r,slot,start}]
+let impacts = [];          // meteor impact rings being animated: [{x,y,r,slot,start}]
 let pickupFades = [];      // fading pickup icons: [{x,y,type,start}]
 let nowMs = 0;
 
@@ -142,7 +147,7 @@ function handle(msg) {
       powerups = msg.powerups || [];
       impacts = [];
       pickupFades = [];
-      applySnapshot(msg.cells);
+      applySnapshot(msg.cells, msg.paintEvents || []);
       applyPlayers(msg.players, true);
       resetTrailAnchors();
       hide(els.results);
@@ -169,11 +174,9 @@ function handle(msg) {
       break;
     }
     case 'impact': {
-      // Missile crater: stamp a solid disc onto the paint layer + animate a boom.
-      if (paintCtx && palette[msg.slot]) {
-        paintCtx.fillStyle = palette[msg.slot];
-        paintCtx.beginPath(); paintCtx.arc(msg.x, msg.y, msg.r, 0, Math.PI * 2); paintCtx.fill();
-      }
+      // Meteor paint lands as an irregular splatter, while the ring gives impact.
+      if (Array.isArray(msg.blobs)) drawPaintSplatter(msg.blobs, msg.slot);
+      else drawPaintDisc(msg.x, msg.y, msg.r, msg.slot);
       impacts.push({ x: msg.x, y: msg.y, r: msg.r, slot: msg.slot, start: nowMs });
       break;
     }
@@ -205,6 +208,8 @@ function applyPlayers(list, snap) {
       me.boost = !!pl.boost;
       me.frozen = !!pl.frozen;
       me.noPaint = !!pl.noPaint;
+      me.castType = pl.castType || null;
+      me.inputActive = !!pl.inputActive;
       if (!me.has) {            // first authoritative position -> adopt it
         me.x = pl.x; me.y = pl.y; me.vx = 0; me.vy = 0; me.dirAngle = 0; me.has = true; me.lastPaintX = undefined;
       } else if (snap) {        // round reset -> snap to spawn
@@ -217,7 +222,7 @@ function applyPlayers(list, snap) {
     if (!r) {
       r = {
         slot: pl.slot, rx: pl.x, ry: pl.y, tx: pl.x, ty: pl.y,
-        face: 1, dirAngle: 0, speed: 0, boost: false, frozen: false, noPaint: false,
+        face: 1, dirAngle: 0, speed: 0, inputActive: false, boost: false, frozen: false, noPaint: false, castType: null,
       };
       remote.set(pl.id, r);
     }
@@ -225,6 +230,8 @@ function applyPlayers(list, snap) {
     r.boost = !!pl.boost;
     r.frozen = !!pl.frozen;
     r.noPaint = !!pl.noPaint;
+    r.castType = pl.castType || null;
+    r.inputActive = !!pl.inputActive;
     // Estimate speed + left/right facing from server position deltas.
     const dx = pl.x - r.tx, dy = pl.y - r.ty;
     r.speed = snap ? 0 : Math.hypot(dx, dy) * 30;   // ~px/s at the 30Hz tick
@@ -275,15 +282,73 @@ function drawSnapshotCell(slot, idx) {
   paintCtx.drawImage(img, wx - SNAPSHOT_STAMP_PX / 2, wy - SNAPSHOT_STAMP_PX / 2);
 }
 
-function applySnapshot(b64) {
+function replayPaintEvents(events) {
+  paintCtx.lineCap = 'round';
+  paintCtx.lineJoin = 'round';
+  for (const ev of events) {
+    const slot = ev.slot;
+    const col = palette[slot] || '#fff';
+    if (ev.t === 'stroke') {
+      paintCtx.strokeStyle = col;
+      paintCtx.lineWidth = TRAIL_W;
+      paintCtx.beginPath();
+      paintCtx.moveTo(ev.x1, ev.y1);
+      paintCtx.lineTo(ev.x2, ev.y2);
+      paintCtx.stroke();
+    } else if (ev.t === 'disc') {
+      drawPaintDisc(ev.x, ev.y, ev.r, slot);
+    } else if (ev.t === 'splatter') {
+      drawPaintSplatter(ev.blobs, slot);
+    }
+  }
+}
+
+function jitter(seed) {
+  return Math.sin(seed * 127.1 + 311.7) * 43758.5453123 % 1;
+}
+
+function drawPaintBlob(x, y, r, slot, seed) {
+  if (!paintCtx || !palette[slot] || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(r)) return;
+  const points = Math.max(7, Math.min(13, Math.round(r / 2.8) + 4));
+  paintCtx.fillStyle = palette[slot];
+  paintCtx.beginPath();
+  for (let i = 0; i < points; i++) {
+    const a = (i / points) * Math.PI * 2;
+    const wobble = 0.78 + Math.abs(jitter(seed + i * 13.3)) * 0.42;
+    const px = x + Math.cos(a) * r * wobble;
+    const py = y + Math.sin(a) * r * wobble;
+    if (i === 0) paintCtx.moveTo(px, py);
+    else paintCtx.lineTo(px, py);
+  }
+  paintCtx.closePath();
+  paintCtx.fill();
+}
+
+function drawPaintDisc(x, y, r, slot) {
+  drawPaintBlob(x, y, r, slot, x * 0.31 + y * 0.17 + r);
+}
+
+function drawPaintSplatter(blobs, slot) {
+  if (!Array.isArray(blobs)) return;
+  for (let i = 0; i < blobs.length; i++) {
+    const b = blobs[i];
+    drawPaintBlob(b.x, b.y, b.r, slot, b.x * 0.23 + b.y * 0.41 + i * 19.7);
+  }
+}
+
+function applySnapshot(b64, paintEvents = []) {
   if (!paintCtx) initPaintLayer();
-  if (snapshotStamps.length !== palette.length) makeSnapshotStamps();
-  const bytes = b64ToBytes(b64);
   paintCtx.clearRect(0, 0, G.worldW, G.worldH);
 
-  // Snapshot cells are authoritative score-grid data, not live brush motion.
-  // Use a bounded rounded stamp so spectators joining mid-round see smooth
-  // paint, without the oversized cloudy blobs caused by the live stroke width.
+  // Prefer high-res server replay so refresh/spectator views match live play.
+  // The score grid fallback is only for compatibility if replay data is absent.
+  if (paintEvents.length) {
+    replayPaintEvents(paintEvents);
+    return;
+  }
+
+  if (snapshotStamps.length !== palette.length) makeSnapshotStamps();
+  const bytes = b64ToBytes(b64);
   for (let i = 0; i < bytes.length; i++) {
     if (bytes[i] !== 255) drawSnapshotCell(bytes[i], i);
   }
@@ -384,6 +449,7 @@ function predict(dt) {
   if (!me.has) return;
   if (phase !== 'active') {
     me.vx = 0; me.vy = 0; me.speed = 0;
+    me.inputActive = false;
     if (me.serverX !== undefined) {
       me.x += (me.serverX - me.x) * 0.35;
       me.y += (me.serverY - me.y) * 0.35;
@@ -392,10 +458,12 @@ function predict(dt) {
   }
   if (me.frozen) {                      // frozen by a rival: locked in place
     me.vx = 0; me.vy = 0; me.speed = 0;
+    me.inputActive = false;
     if (me.serverX !== undefined) { me.x += (me.serverX - me.x) * 0.2; me.y += (me.serverY - me.y) * 0.2; }
     return;
   }
   const { mx, my } = currentInput();
+  me.inputActive = !!(mx || my);
   const accel = me.boost ? ACCEL * BOOST_MULT : ACCEL;
   const maxSpeed = me.boost ? MAX_SPEED * BOOST_MULT : MAX_SPEED;
   if (mx || my) {
@@ -484,17 +552,26 @@ function getTintedSheet(slot) {
   return c;
 }
 
-function petState(speed, boost, frozen, noPaint) {
+function petState(speed, boost, frozen, noPaint, castType, inputActive) {
   if (frozen) return 'frozen-disabled';
-  if (noPaint) return 'inkjam-disabled';
+  if (noPaint) return speed > DRIFT_EPS ? 'inkjam-disabled-moving' : 'inkjam-disabled';
+  if (castType === 'freeze') return 'freeze-cast';
+  if (castType === 'inkjam') return 'inkjam-cast';
+  if (castType === 'missile') return 'missile-cast';
   if (boost) return 'speed';
+  if (!inputActive && speed > DRIFT_EPS) return 'drift';
   if (speed > MOVE_EPS) return 'running-right';
-  if (speed > DRIFT_EPS) return 'drift';
   return 'idle';
 }
 
 function brushPose(state, face, dirAngle) {
-  const directional = state === 'running-right' || state === 'running-left' || state === 'drift' || state === 'speed';
+  const directional =
+    state === 'running-right' ||
+    state === 'running-left' ||
+    state === 'speed' ||
+    state === 'inkjam-cast' ||
+    state === 'inkjam-disabled-moving' ||
+    state === 'missile-cast';
   if (!directional) return { rowState: state, flipX: 1, directional: false };
 
   const fallback = face < 0 ? Math.PI : 0;
@@ -502,10 +579,11 @@ function brushPose(state, face, dirAngle) {
   const cos = Math.cos(heading);
   const headingLeft = cos < -0.08 || (Math.abs(cos) <= 0.08 && face < 0);
 
-  if (state === 'speed') {
-    return { rowState: 'speed', flipX: headingLeft ? -1 : 1, directional: true };
+  if (state === 'running-right' || state === 'running-left') {
+    return { rowState: headingLeft ? 'running-left' : 'running-right', flipX: 1, directional: true };
   }
-  return { rowState: headingLeft ? 'running-left' : 'running-right', flipX: 1, directional: true };
+
+  return { rowState: state, flipX: headingLeft ? -1 : 1, directional: true };
 }
 
 function drawGroundShadow(x, y, rx, ry, alpha = 0.32) {
@@ -522,15 +600,22 @@ function drawGroundShadow(x, y, rx, ry, alpha = 0.32) {
 
 // Draw the in-game brush spirit. The atlas owns pose; runtime only selects a
 // row and mirrors speed-left. Do not rotate brush sprites to fake direction.
-function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint) {
+function spriteDrawHeight(state) {
+  if (state === 'idle') return PET_IDLE_DRAW_H;
+  if (state === 'drift') return PET_DRIFT_DRAW_H;
+  return PET_DRAW_H;
+}
+
+function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint, castType, inputActive) {
   const col = palette[slot] || '#fff';
-  const state = petState(speed, boost, frozen, noPaint);
+  const state = petState(speed, boost, frozen, noPaint, castType, inputActive);
   const pose = brushPose(state, face, dirAngle);
   const st = PET.states[state] || PET.states.idle;
   const rowSt = PET.states[pose.rowState] || st;
   const ts = getTintedSheet(slot);
   if (!ts) return;
-  const idleScale = state === 'idle' ? PET_IDLE_DRAW_H / PET_DRAW_H : 1;
+  const drawH = spriteDrawHeight(state);
+  const idleScale = drawH / PET_DRAW_H;
 
   // Colored ground glow (identity) + "you" ring.
   drawGroundShadow(x, y + 12, 21 * idleScale, 7 * idleScale, frozen ? 0.2 : 0.34);
@@ -547,7 +632,6 @@ function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen,
 
   const frame = Math.floor(nowMs / st.rate) % st.frames;
   const sx = frame * PET.cellW, sy = rowSt.row * PET.cellH;
-  const drawH = state === 'idle' ? PET_IDLE_DRAW_H : PET_DRAW_H;
   const dw = PET.cellW * (drawH / PET.cellH);
   const dh = drawH;
   ctx.save();
@@ -589,12 +673,11 @@ function drawPickupFade(fx) {
 
 function drawPowerup(pu) {
   if (!powerupReady) return;
-  const bob = Math.sin(nowMs / 320 + pu.id * 1.3) * 3;
+  const bob = Math.sin(nowMs / 420 + pu.id * 1.3) * 1.5;
   const x = pu.x, y = pu.y + bob;
-  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 260 + pu.id);
 
-  drawGroundShadow(x, y + 19, 24 + pulse * 2, 8, 0.36);
-  drawPowerupSprite(pu.type, 'active', x, y, 56 + pulse * 4);
+  drawGroundShadow(x, y + 19, 24, 8, 0.34);
+  drawPowerupSprite(pu.type, 'active', x, y, 56);
 }
 
 function render() {
@@ -610,7 +693,7 @@ function render() {
     pickupFades = pickupFades.filter((fx) => nowMs - fx.start < POWERUP_FADE_MS);
   }
 
-  // Missile-impact shockwaves (expanding white ring) over the fresh craters.
+  // Meteor-impact shockwaves (expanding white ring) over the fresh splatter.
   if (impacts.length) {
     for (const im of impacts) {
       const age = (nowMs - im.start) / 450;
@@ -627,13 +710,13 @@ function render() {
   // Collect actors and depth-sort by y (lower draws on top).
   const actors = [];
   for (const r of remote.values()) {
-    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint });
+    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, inputActive: r.inputActive, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, castType: r.castType });
   }
   if (me.has && !spectating) {
-    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, dirAngle: me.dirAngle, speed: me.speed, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint });
+    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, dirAngle: me.dirAngle, speed: me.speed, inputActive: me.inputActive, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint, castType: me.castType });
   }
   actors.sort((a, b) => a.y - b.y);
-  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint);
+  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.castType, a.inputActive);
 }
 
 // ---- HUD --------------------------------------------------------------------
@@ -735,7 +818,10 @@ function resize() {
   // Preserve aspect ratio (never squish); fit the board in the viewport, centered.
   // Shrinking the window scales the whole board down uniformly.
   const aspect = G.worldW / G.worldH;
-  const vw = window.innerWidth, vh = window.innerHeight;
+  const stageBox = boxExtras(stage);
+  const frameBox = boxExtras(stageFrame);
+  const vw = Math.max(320, window.innerWidth - stageBox.x - frameBox.x);
+  const vh = Math.max(240, window.innerHeight - stageBox.y - frameBox.y);
   let dw = vw, dh = vw / aspect;
   if (dh > vh) { dh = vh; dw = vh * aspect; }
   dw = Math.floor(dw); dh = Math.floor(dh);
@@ -761,6 +847,23 @@ function resize() {
 window.addEventListener('resize', resize);
 
 // ---- Utils ------------------------------------------------------------------
+function cssPx(style, prop) {
+  return parseFloat(style.getPropertyValue(prop)) || 0;
+}
+
+function boxExtras(el) {
+  if (!el) return { x: 0, y: 0 };
+  const s = getComputedStyle(el);
+  return {
+    x: cssPx(s, 'padding-left') + cssPx(s, 'padding-right') +
+      cssPx(s, 'border-left-width') + cssPx(s, 'border-right-width') +
+      cssPx(s, 'margin-left') + cssPx(s, 'margin-right'),
+    y: cssPx(s, 'padding-top') + cssPx(s, 'padding-bottom') +
+      cssPx(s, 'border-top-width') + cssPx(s, 'border-bottom-width') +
+      cssPx(s, 'margin-top') + cssPx(s, 'margin-bottom'),
+  };
+}
+
 function hexToRGB(hex) {
   const h = hex.replace('#', '');
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
