@@ -615,7 +615,12 @@ const server = http.createServer((req, res) => {
       res.end('Not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
+    const ext = path.extname(filePath);
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    if (urlPath.startsWith('/assets/')) {
+      headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 });
@@ -626,6 +631,10 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
+  if (ws._socket && typeof ws._socket.setNoDelay === 'function') {
+    ws._socket.setNoDelay(true);
+  }
+
   const id = nextId++;
   const p = new Player(id, ws);
   players.set(id, p);

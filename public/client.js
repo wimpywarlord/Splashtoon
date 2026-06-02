@@ -14,6 +14,9 @@ const BRUSH_R = 16;
 const MOVE_EPS = 14;          // speed (px/s) above which the brush plays its run cycle
 const DRIFT_EPS = 3.5;        // keep a deceleration/drift pose until motion is visually dead
 const FACE_EPS = 18;          // |vx| needed to flip left/right facing (hysteresis -> no flicker)
+const RECONCILE_SOFT_DIST = 28; // tolerate normal network delay without visible drag
+const RECONCILE_HARD_DIST = 140; // snap only when prediction is clearly wrong
+const RECONCILE_SOFT_GAIN = 0.035;
 
 // Animated brush-spirit spritesheet: 8 cols x 9 rows, 192x208 cells. Rows are
 // game-specific brush/powerup interaction states. The pink paint is recolored
@@ -486,8 +489,18 @@ function predict(dt) {
 
   // Gently reconcile toward the server's authoritative position.
   if (me.serverX !== undefined) {
-    me.x += (me.serverX - me.x) * 0.12;
-    me.y += (me.serverY - me.y) * 0.12;
+    const dx = me.serverX - me.x;
+    const dy = me.serverY - me.y;
+    const err = Math.hypot(dx, dy);
+    if (err > RECONCILE_HARD_DIST) {
+      me.x = me.serverX;
+      me.y = me.serverY;
+      me.vx = 0;
+      me.vy = 0;
+    } else if (err > RECONCILE_SOFT_DIST) {
+      me.x += dx * RECONCILE_SOFT_GAIN;
+      me.y += dy * RECONCILE_SOFT_GAIN;
+    }
   }
 
   me.speed = Math.hypot(me.vx, me.vy);
