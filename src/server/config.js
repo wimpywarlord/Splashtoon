@@ -27,6 +27,15 @@ const TICK_MS = SIM_MS;
 const MAX_ROOMS = 50;
 const ROOM_EMPTY_GRACE_MS = 30_000;
 
+// Bot AI tuning.
+// A powerup within BOT_NOTICE_R of a bot becomes its top priority (grabbed after
+// only the bot's reaction delay). COARSE_* is the resolution of the per-room
+// "opportunity grid" bots use to steer toward open / contestable territory.
+const BOT_NOTICE_R = 340;
+const COARSE_ZW = 12;
+const COARSE_ZH = 8;
+const BOT_COARSE_MS = 400;   // how often a room rebuilds its opportunity grid
+
 const MAX_SPEED = 230;
 const ACCEL = 2000;
 const DAMPING_PER_SEC = 4.0;
@@ -43,6 +52,12 @@ const POWERUP_MAX = 2;
 const POWERUP_SPAWN_MS = 13_000;
 const POWERUP_TTL_MS = 6_000;
 const POWERUP_R = 18;
+// Powerups spawn at a candidate point well away from the pack (open ground, fair
+// race) but with NOISE: we sample many candidates, then pick randomly among the
+// TOP_K most-open ones, so a lone player can't camp empty space for guaranteed
+// pickups.
+const POWERUP_SPAWN_TRIES = 56;
+const POWERUP_SPAWN_TOPK = 12;
 const BOOST_MS = POWERUP_EFFECT_MS;
 const BOOST_MULT = 1.8;
 const FREEZE_MS = POWERUP_EFFECT_MS;
@@ -92,6 +107,10 @@ module.exports = {
   BROADCAST_EVERY,
   MAX_ROOMS,
   ROOM_EMPTY_GRACE_MS,
+  BOT_NOTICE_R,
+  COARSE_ZW,
+  COARSE_ZH,
+  BOT_COARSE_MS,
   TICK_HZ,
   TICK_MS,
   MAX_SPEED,
@@ -107,6 +126,8 @@ module.exports = {
   POWERUP_SPAWN_MS,
   POWERUP_TTL_MS,
   POWERUP_R,
+  POWERUP_SPAWN_TRIES,
+  POWERUP_SPAWN_TOPK,
   BOOST_MS,
   BOOST_MULT,
   FREEZE_MS,

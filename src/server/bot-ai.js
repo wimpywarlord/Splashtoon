@@ -1,21 +1,27 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Bot AI: make filler players feel like humans, not robots.
+// Bot AI: filler players that feel like fierce, competitive humans.
 //
-// The simulation reads each player's intent as (mx,my) and NORMALIZES it
-// (see stepPlayer), so only the DIRECTION matters. Humans send {-1,0,1} per
-// axis; bots instead write a CONTINUOUS unit vector (cos/sin of an aim angle),
-// which we turn with a capped slew rate. That single fact buys us smooth analog
-// turning a human keyboard player roughly has via SOCD + momentum, and makes
-// bot motion indistinguishable from a remote human after the client estimates
-// heading from position deltas.
+// The simulation reads intent as (mx,my) and NORMALIZES it (see stepPlayer), so
+// only DIRECTION matters. Bots write a CONTINUOUS unit vector (cos/sin of an aim
+// angle) turned at a capped slew rate -> smooth analog turning, indistinguishable
+// from a remote human once the client estimates heading from position deltas.
 //
-// Layered on top: reaction latency (notice opportunities late), a slowly
-// drifting aim bias + gentle wander (imperfect, non-jittery aim), occasional
-// "thinking" pauses (coast to a stop), softmax-ish target choice (not greedy),
-// edge avoidance (no wall-grinding tell), and rubber-banding to the score
-// leader (try harder when losing, ease off when running away with it).
+// Decision priority each tick:
+//   1. Hesitation   - rare, personality-driven coast (human imperfection).
+//   2. Powerup grab - a powerup in the bot's vicinity becomes top priority after
+//                     only its reaction delay (~human reaction time). Grabbing
+//                     denies it to rivals and (freeze/inkjam/missile) weaponizes
+//                     it against them.
+//   3. Territory    - steer toward the best ZONE in the room's coarse opportunity
+//                     grid. Painting over an enemy cell is a 2-point swing
+//                     (they -1, you +1) vs +1 for blank, so enemy turf is valued
+//                     ~2x blank, and when behind the bot gangs the LEADER's turf.
+//
+// Rubber-banding keys off the score leader: a losing bot reacts faster, hesitates
+// less, and contests harder; a runaway leader eases off. So the better the human
+// plays, the harder the field pushes back.
 // ---------------------------------------------------------------------------
 
 const {
@@ -27,13 +33,17 @@ const {
   EMPTY,
   BRUSH_R,
   MAX_PLAYERS,
+  BOT_NOTICE_R,
+  COARSE_ZW,
+  COARSE_ZH,
 } = require('./config');
 
 const TWO_PI = Math.PI * 2;
 const TOTAL_CELLS = GRID_W * GRID_H;
+const ZONE_CELLS = (GRID_W / COARSE_ZW) * (GRID_H / COARSE_ZH);
+const ZONE_W_PX = WORLD_W / COARSE_ZW;
+const ZONE_H_PX = WORLD_H / COARSE_ZH;
 
-// Human-ish handles. Bots draw a name not already taken in their room; the
-// client renders these identically to human names, with no bot marker.
 const NAME_POOL = [
   'Riley', 'Kai', 'Mara', 'Devon', 'Sora', 'Nova', 'Pip', 'Jules', 'Remy', 'Ash',
   'Wren', 'Theo', 'Luca', 'Indi', 'Zane', 'Quin', 'Maya', 'Otis', 'Cleo', 'Finn',
@@ -43,53 +53,45 @@ const NAME_POOL = [
   'Isa', 'Jett', 'Kit', 'Lior', 'Moss', 'Nyx', 'Onyx', 'Posy', 'Rio', 'Skye',
 ];
 
-// Personality archetypes. Ranges are [min,max] sampled per bot. These shape the
-// FEEL: aggressive bots react fast, aim true, turn sharp, rarely pause; casual /
-// wanderer bots are slower, sloppier, and meander.
+// Personality archetypes. Ranges [min,max] are sampled per bot. Tuned sharper
+// than a casual filler so the field is genuinely competitive.
 const PERSONALITIES = {
   aggressive: {
-    reactMs: [90, 170], aimError: 0.08, turnRate: 7.0,
-    thinkProb: 0.05, thinkMs: [120, 300], retargetMs: [500, 950],
-    greed: 0.70, contest: 0.40, wanderAmp: 0.10, wanderFreq: 1.6,
+    reactMs: [80, 150], aimError: 0.06, turnRate: 7.5,
+    thinkProb: 0.02, thinkMs: [100, 250], retargetMs: [450, 800],
+    greed: 0.85, contest: 0.6, wanderAmp: 0.04, wanderFreq: 1.4,
   },
   balanced: {
-    reactMs: [140, 250], aimError: 0.15, turnRate: 5.2,
-    thinkProb: 0.12, thinkMs: [200, 450], retargetMs: [800, 1500],
-    greed: 0.50, contest: 0.24, wanderAmp: 0.16, wanderFreq: 1.2,
+    reactMs: [120, 220], aimError: 0.12, turnRate: 5.6,
+    thinkProb: 0.06, thinkMs: [180, 380], retargetMs: [600, 1100],
+    greed: 0.6, contest: 0.4, wanderAmp: 0.07, wanderFreq: 1.1,
   },
   casual: {
-    reactMs: [230, 380], aimError: 0.26, turnRate: 3.6,
-    thinkProb: 0.20, thinkMs: [300, 700], retargetMs: [1200, 2200],
-    greed: 0.35, contest: 0.14, wanderAmp: 0.24, wanderFreq: 0.9,
+    reactMs: [200, 330], aimError: 0.20, turnRate: 4.1,
+    thinkProb: 0.12, thinkMs: [260, 560], retargetMs: [1000, 1700],
+    greed: 0.42, contest: 0.22, wanderAmp: 0.12, wanderFreq: 0.95,
   },
   wanderer: {
-    reactMs: [200, 340], aimError: 0.38, turnRate: 3.0,
-    thinkProb: 0.28, thinkMs: [300, 800], retargetMs: [1500, 2800],
-    greed: 0.25, contest: 0.08, wanderAmp: 0.34, wanderFreq: 0.7,
+    reactMs: [180, 300], aimError: 0.30, turnRate: 3.4,
+    thinkProb: 0.18, thinkMs: [280, 650], retargetMs: [1300, 2200],
+    greed: 0.30, contest: 0.12, wanderAmp: 0.18, wanderFreq: 0.8,
   },
 };
-// Weighted draw: mostly competent, a few drifters for variety/character.
+// Weighted draw: a fierce field with a little character.
 const PERSONALITY_WEIGHTS = [
-  ['aggressive', 0.30],
+  ['aggressive', 0.40],
   ['balanced', 0.40],
-  ['casual', 0.20],
-  ['wanderer', 0.10],
+  ['casual', 0.15],
+  ['wanderer', 0.05],
 ];
 
-function rand(min, max) {
-  return min + Math.random() * (max - min);
-}
-function randInt(min, max) {
-  return Math.floor(rand(min, max + 1));
-}
-// Approx standard normal (std ~1), bounded ~±3 — used for smooth, non-spiky noise.
+function rand(min, max) { return min + Math.random() * (max - min); }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+// Approx standard normal (std ~1, bounded ~±3) for smooth, non-spiky noise.
 function gauss() {
   return ((Math.random() - 0.5) + (Math.random() - 0.5) + (Math.random() - 0.5)) * 2;
 }
-function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-// Rotate `cur` toward `target` by at most `maxStep`, taking the shortest arc.
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function stepAngle(cur, target, maxStep) {
   let diff = target - cur;
   while (diff > Math.PI) diff -= TWO_PI;
@@ -107,13 +109,10 @@ function pickPersonalityName() {
   return 'balanced';
 }
 
-// Pick a human-looking name not present in `taken` (a Set of in-use names).
 function pickName(taken) {
   const free = NAME_POOL.filter((n) => !taken || !taken.has(n));
   if (free.length) return free[randInt(0, free.length - 1)];
-  // Pool exhausted (would need >60 players): disambiguate with a suffix.
-  const base = NAME_POOL[randInt(0, NAME_POOL.length - 1)];
-  return `${base}${randInt(2, 99)}`;
+  return `${NAME_POOL[randInt(0, NAME_POOL.length - 1)]}${randInt(2, 99)}`;
 }
 
 function createBotAI() {
@@ -131,139 +130,241 @@ function createBotAI() {
     contest: t.contest,
     wanderAmp: t.wanderAmp,
     wanderFreq: t.wanderFreq,
-    // scratch state
+    noticeR: BOT_NOTICE_R * (0.7 + 0.6 * t.greed),   // greedier bots spot powerups farther
+    // scratch
     aimAngle: rand(0, TWO_PI),
     aimBias: gauss() * t.aimError,
     wanderPhase: rand(0, TWO_PI),
     targetX: undefined,
     targetY: undefined,
-    pendingX: undefined,
-    pendingY: undefined,
-    retargetAt: 0,        // retarget on first tick
-    reactUntil: 0,
+    retargetAt: 0,
     thinkUntil: 0,
+    puId: null,
+    puReactAt: 0,
   };
 }
 
-// How far behind the leader this bot is, in [-1, 1]. >0 = losing (push harder),
-// <0 = leading (ease off so humans stay in it).
+// How far behind the leader this bot is, in [-1, 1]. >0 = losing (push), <0 = leading.
 function rubberBand(room, p) {
   let leader = 0;
-  for (let s = 0; s < MAX_PLAYERS; s++) {
-    if (room.scores[s] > leader) leader = room.scores[s];
-  }
+  for (let s = 0; s < MAX_PLAYERS; s++) if (room.scores[s] > leader) leader = room.scores[s];
   const mine = room.scores[p.slot] || 0;
-  return clamp((leader - mine) / (0.15 * TOTAL_CELLS), -1, 1);
+  return clamp((leader - mine) / (0.12 * TOTAL_CELLS), -1, 1);
 }
 
-// Choose a fresh goal: weigh powerups and a coarse sample of grid cells, then
-// pick by weighted random (not argmax) so bots are purposeful but fallible.
-function chooseTarget(p, room, ai, t, band) {
-  const candidates = [];
-  const behind = Math.max(0, band);
+function leaderSlotOf(room) {
+  let slot = -1, best = 0;
+  for (let s = 0; s < MAX_PLAYERS; s++) if (room.scores[s] > best) { best = room.scores[s]; slot = s; }
+  return slot;
+}
 
+function nearestPowerup(room, p, noticeR) {
+  let best = null;
+  let bestD = noticeR;
   for (const pu of room.powerups) {
     const d = Math.hypot(pu.x - p.x, pu.y - p.y);
-    let w = (ai.greed + 0.3 * behind) * (260 / (d + 70));
-    if (pu.type === 'speed' || pu.type === 'missile') w *= 1.4;
-    candidates.push({ x: pu.x, y: pu.y, w });
+    if (d < bestD) { bestD = d; best = pu; }
   }
+  return best;
+}
 
-  const SAMPLES = 26;
-  const grid = room.grid;
-  for (let i = 0; i < SAMPLES; i++) {
-    const cx = randInt(0, GRID_W - 1);
-    const cy = randInt(0, GRID_H - 1);
-    const owner = grid[cy * GRID_W + cx];
-    let value;
-    if (owner === EMPTY) value = 1.0;
-    else if (owner === p.slot) value = 0.04;
-    else value = 0.35 + ai.contest + 0.45 * behind;   // enemy turf: contest harder when losing
-    const wx = cx * CELL + CELL * 0.5;
-    const wy = cy * CELL + CELL * 0.5;
-    const d = Math.hypot(wx - p.x, wy - p.y);
-    candidates.push({ x: wx, y: wy, w: value * (320 / (d + 130)) });
+// Choose a territory goal from the room's coarse opportunity grid. Enemy turf is
+// worth ~2x blank (the 2-point overpaint swing); the leader's turf is worth even
+// more when behind; a crowding penalty spreads bots out (no spawn clumping).
+function chooseTerritoryTarget(p, room, ai, band) {
+  const blank = room.coarseBlank;
+  const own = room.coarseOwn;
+  if (!blank) {                          // grid not built yet -> head to center
+    ai.targetX = WORLD_W * 0.5 + gauss() * 220;
+    ai.targetY = WORLD_H * 0.5 + gauss() * 160;
+    return;
   }
+  const ZW = COARSE_ZW, ZH = COARSE_ZH;
+  const behind = Math.max(0, band);
+  const leader = leaderSlotOf(room);
+  // Endgame: once blank space is scarce, the only way to score is overpainting,
+  // and the leader's cells are the juiciest. Everyone escalates contesting and
+  // piles onto the leader as the canvas fills, regardless of their own standing.
+  let painted = 0;
+  for (let s = 0; s < MAX_PLAYERS; s++) painted += room.scores[s];
+  const endgame = clamp(1 - (1 - painted / TOTAL_CELLS) / 0.25, 0, 1);
+  const enemyW = 1.6 + ai.contest + 0.6 * behind + 1.4 * endgame;     // overpaint rivals (>= 2x blank)
+  const leaderW = (leader >= 0 && leader !== p.slot) ? (0.4 + 1.0 * behind + 1.3 * endgame) : 0;
 
-  let sum = 0;
-  for (const c of candidates) sum += c.w;
-  let pick = candidates[candidates.length - 1];
-  if (sum > 0) {
-    let r = Math.random() * sum;
-    for (const c of candidates) {
-      r -= c.w;
-      if (r <= 0) { pick = c; break; }
+  // Player occupancy per zone -> crowding penalty so bots fan out.
+  const occ = new Int8Array(ZW * ZH);
+  for (const o of room.players.values()) {
+    if (o.slot < 0) continue;
+    const zx = Math.min(ZW - 1, (o.x / ZONE_W_PX) | 0);
+    const zy = Math.min(ZH - 1, (o.y / ZONE_H_PX) | 0);
+    occ[zy * ZW + zx]++;
+  }
+  const myZX = Math.min(ZW - 1, (p.x / ZONE_W_PX) | 0);
+  const myZY = Math.min(ZH - 1, (p.y / ZONE_H_PX) | 0);
+
+  // Track the top 3 zones; pick among them for human-like variety.
+  let b1 = -Infinity, b2 = -Infinity, b3 = -Infinity;
+  let x1 = p.x, y1 = p.y, x2 = p.x, y2 = p.y, x3 = p.x, y3 = p.y;
+  for (let zy = 0; zy < ZH; zy++) {
+    for (let zx = 0; zx < ZW; zx++) {
+      const z = zy * ZW + zx;
+      const b = blank[z];
+      const ownC = own[z * MAX_PLAYERS + p.slot];
+      const enemy = ZONE_CELLS - b - ownC;
+      let value = b + enemy * enemyW - ownC * 0.7;
+      // Border zones tend to get left for last (everything is farther from them);
+      // a blank bonus there counteracts the central bias so edges/corners fill in.
+      if (zx === 0 || zx === ZW - 1 || zy === 0 || zy === ZH - 1) value += b * 0.18;
+      if (leaderW) value += own[z * MAX_PLAYERS + leader] * leaderW;
+      const cxp = (zx + 0.5) * ZONE_W_PX;
+      const cyp = (zy + 0.5) * ZONE_H_PX;
+      const dist = Math.hypot(cxp - p.x, cyp - p.y);
+      const crowd = Math.max(0, occ[z] - (zx === myZX && zy === myZY ? 1 : 0));
+      // Gentler distance falloff -> bots commit to farther targets (longer, straighter
+      // sweeps that also reach the edges) instead of short curving hops near the middle.
+      const score = value / (1 + dist * 0.0024) - crowd * 16;
+      if (score > b1) { b3 = b2; x3 = x2; y3 = y2; b2 = b1; x2 = x1; y2 = y1; b1 = score; x1 = cxp; y1 = cyp; }
+      else if (score > b2) { b3 = b2; x3 = x2; y3 = y2; b2 = score; x2 = cxp; y2 = cyp; }
+      else if (score > b3) { b3 = score; x3 = cxp; y3 = cyp; }
     }
   }
-
-  const jx = clamp(pick.x + gauss() * 40, BRUSH_R, WORLD_W - BRUSH_R);
-  const jy = clamp(pick.y + gauss() * 40, BRUSH_R, WORLD_H - BRUSH_R);
-
-  // First target commits immediately; later ones arrive after a reaction delay.
-  if (ai.targetX === undefined) {
-    ai.targetX = jx; ai.targetY = jy;
-  } else {
-    ai.pendingX = jx; ai.pendingY = jy;
-  }
-  ai.reactUntil = t + rand(ai.reactMs[0], ai.reactMs[1]);
-  ai.aimBias = gauss() * ai.aimError;   // resample steady-state aim error
+  const r = Math.random();
+  let px = x1, py = y1;
+  if (r > 0.85 && b3 > -Infinity) { px = x3; py = y3; }
+  else if (r > 0.6 && b2 > -Infinity) { px = x2; py = y2; }
+  ai.targetX = clamp(px + gauss() * (ZONE_W_PX * 0.3), BRUSH_R, WORLD_W - BRUSH_R);
+  ai.targetY = clamp(py + gauss() * (ZONE_H_PX * 0.3), BRUSH_R, WORLD_H - BRUSH_R);
+  ai.aimBias = gauss() * ai.aimError;
 }
 
-// Blend a wall-repulsion term into the desired heading near the arena edges so
-// bots peel away instead of grinding the boundary (a dead giveaway).
+// Keep bots off the very boundary WITHOUT pulling them away from the edges (we
+// want edges painted). Only nudge when a bot is close to a wall AND heading
+// further into it; the nudge cancels the into-wall component, leaving motion
+// tangential -> the bot paints ALONG the edge instead of grinding or fleeing.
 function avoidEdges(p, desired) {
-  const margin = BRUSH_R * 4;
-  let rx = 0, ry = 0;
-  if (p.x < margin) rx += (margin - p.x) / margin;
-  else if (p.x > WORLD_W - margin) rx -= (margin - (WORLD_W - p.x)) / margin;
-  if (p.y < margin) ry += (margin - p.y) / margin;
-  else if (p.y > WORLD_H - margin) ry -= (margin - (WORLD_H - p.y)) / margin;
-  if (rx === 0 && ry === 0) return desired;
-  const dvx = Math.cos(desired) + rx * 1.2;
-  const dvy = Math.sin(desired) + ry * 1.2;
-  return Math.atan2(dvy, dvx);
+  const margin = BRUSH_R * 2;
+  const dx = Math.cos(desired), dy = Math.sin(desired);
+  let nx = 0, ny = 0;
+  if (p.x < margin && dx < 0) nx += (1 - p.x / margin);
+  else if (p.x > WORLD_W - margin && dx > 0) nx -= (1 - (WORLD_W - p.x) / margin);
+  if (p.y < margin && dy < 0) ny += (1 - p.y / margin);
+  else if (p.y > WORLD_H - margin && dy > 0) ny -= (1 - (WORLD_H - p.y) / margin);
+  if (nx === 0 && ny === 0) return desired;
+  return Math.atan2(dy + ny, dx + nx);
 }
 
-// Per-tick: set p.mx / p.my. dt is the sim step (~1/60s); t is now() in ms.
+// Local "where should I paint next" gradient: probe the fine grid in 8 directions
+// and pull toward paintable cells. enemyVal weights overpainting rivals; early
+// (lots of blank) it stays low so bots claim fresh space (which sticks) rather
+// than fighting over contested cells, and it rises into the endgame to attack.
+// This is what fills gaps: after laying a stripe, the un-painted side scores
+// higher, so the bot curls back to cover it instead of streaking off.
+function paintField(room, p, enemyVal) {
+  const grid = room.grid;
+  const LA = BRUSH_R * 2.0;
+  let vx = 0, vy = 0;
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * TWO_PI;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let val = 0, n = 0;
+    for (let s = 1; s <= 3; s++) {
+      const wx = p.x + dx * LA * s;
+      const wy = p.y + dy * LA * s;
+      if (wx < 0 || wy < 0 || wx >= WORLD_W || wy >= WORLD_H) continue;
+      const c = grid[((wy / CELL) | 0) * GRID_W + ((wx / CELL) | 0)];
+      n++;
+      if (c === EMPTY) val += 1;
+      else if (c !== p.slot) val += enemyVal;   // own cells score 0 -> avoid re-covering
+    }
+    if (n) { const w = val / n; vx += dx * w; vy += dy * w; }
+  }
+  return { vx, vy };
+}
+
+// Push away from nearby rivals so bots keep spacing while claiming territory
+// (paint too close to a rival and they just overpaint it back).
+function rivalRepel(room, p) {
+  const R = BRUSH_R * 6;
+  let vx = 0, vy = 0;
+  for (const o of room.players.values()) {
+    if (o.slot < 0 || o === p) continue;
+    const dx = p.x - o.x, dy = p.y - o.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 0.001 && d < R) {
+      const w = 1 - d / R;
+      vx += (dx / d) * w;
+      vy += (dy / d) * w;
+    }
+  }
+  return { vx, vy };
+}
+
 function updateBot(p, room, dt, t) {
   const ai = p.ai;
   if (!ai) { p.mx = 0; p.my = 0; return; }
 
-  // Hesitation: zero input so damping eases the brush to a stop. (Reducing the
-  // vector magnitude would be pointless — the sim normalizes it away.)
+  // 1. Hesitation: coast (zero input -> damping eases to a stop).
   if (t < ai.thinkUntil) { p.mx = 0; p.my = 0; return; }
 
   const band = rubberBand(room, p);
 
-  if (t >= ai.retargetAt) {
-    let interval = rand(ai.retargetMs[0], ai.retargetMs[1]);
-    if (band > 0) interval *= (1 - 0.4 * band);          // losing -> re-plan sooner
-    else interval *= (1 + 0.5 * -band);                  // leading -> dawdle
-    ai.retargetAt = t + interval;
-    const pauseProb = ai.thinkProb * (1 - 0.6 * Math.max(0, band));
-    if (Math.random() < pauseProb) {
-      ai.thinkUntil = t + rand(ai.thinkMs[0], ai.thinkMs[1]);
+  // 2. Powerup priority: a powerup in range is grabbed after the reaction delay.
+  let urgent = false;
+  const pu = nearestPowerup(room, p, ai.noticeR);
+  if (pu) {
+    if (ai.puId !== pu.id) { ai.puId = pu.id; ai.puReactAt = t + rand(ai.reactMs[0], ai.reactMs[1]); }
+    if (t >= ai.puReactAt) { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
+  } else if (ai.puId !== null) {
+    ai.puId = null;            // it was taken / expired -> resume territory now
+    ai.retargetAt = 0;
+  }
+
+  // 3. Territory (only when not chasing a powerup).
+  if (!urgent) {
+    if (ai.targetX === undefined || t >= ai.retargetAt) {
+      let interval = rand(ai.retargetMs[0], ai.retargetMs[1]);
+      if (band > 0) interval *= (1 - 0.45 * band);            // losing -> re-plan sooner
+      else interval *= (1 + 0.4 * -band);                     // leading -> dawdle
+      ai.retargetAt = t + interval;
+      const pauseProb = ai.thinkProb * (1 - 0.7 * Math.max(0, band));
+      if (Math.random() < pauseProb) ai.thinkUntil = t + rand(ai.thinkMs[0], ai.thinkMs[1]);
+      chooseTerritoryTarget(p, room, ai, band);
     }
-    chooseTarget(p, room, ai, t, band);
+    // Reached the goal -> re-plan promptly so the bot keeps sweeping, not idling.
+    const dx0 = ai.targetX - p.x, dy0 = ai.targetY - p.y;
+    if (dx0 * dx0 + dy0 * dy0 < (BRUSH_R * 2.5) * (BRUSH_R * 2.5)) {
+      ai.retargetAt = Math.min(ai.retargetAt, t + 100);
+    }
   }
 
-  // Commit a pending target once the reaction delay elapses.
-  if (ai.pendingX !== undefined && t >= ai.reactUntil) {
-    ai.targetX = ai.pendingX; ai.targetY = ai.pendingY;
-    ai.pendingX = undefined; ai.pendingY = undefined;
-  }
-
-  let desired = Math.atan2(ai.targetY - p.y, ai.targetX - p.x);
+  // 4. Steer (slew-limited -> always human-smooth).
   ai.wanderPhase += dt * ai.wanderFreq;
-  desired += Math.sin(ai.wanderPhase) * ai.wanderAmp + ai.aimBias;
+  let desired;
+  if (urgent) {
+    desired = Math.atan2(ai.targetY - p.y, ai.targetX - p.x) + Math.sin(ai.wanderPhase) * (ai.wanderAmp * 0.25);
+  } else {
+    // Blend global zone target + local paint-field + momentum + rival spacing.
+    let painted = 0;
+    for (let s = 0; s < MAX_PLAYERS; s++) painted += room.scores[s];
+    const attack = clamp(1 - (1 - painted / TOTAL_CELLS) / 0.25, 0, 1);   // endgame ramp
+    const enemyVal = 0.15 + 1.9 * Math.max(attack, 0.6 * Math.max(0, band));
+    const field = paintField(room, p, enemyVal);
+    const tAng = Math.atan2(ai.targetY - p.y, ai.targetX - p.x);
+    let dvx = Math.cos(tAng) * 0.45 + field.vx * 1.2 + Math.cos(ai.aimAngle) * 0.55;
+    let dvy = Math.sin(tAng) * 0.45 + field.vy * 1.2 + Math.sin(ai.aimAngle) * 0.55;
+    // Spacing from rivals while claiming; fades out as the game turns to attack.
+    const spaceW = 0.9 * (1 - attack) * (1 - 0.5 * Math.max(0, band));
+    if (spaceW > 0.05) {
+      const rep = rivalRepel(room, p);
+      dvx += rep.vx * spaceW;
+      dvy += rep.vy * spaceW;
+    }
+    desired = Math.atan2(dvy, dvx) + Math.sin(ai.wanderPhase) * ai.wanderAmp + ai.aimBias;
+  }
   desired = avoidEdges(p, desired);
 
-  // Slew-limit toward the desired heading: the bot can't snap, only turn at a
-  // capped rate, exactly like a player easing the stick/keys around.
-  let turn = ai.turnRate;
-  if (band > 0) turn *= (1 + 0.25 * band);   // a touch sharper when chasing
+  const turn = ai.turnRate * (urgent ? 1.5 : 1) * (1 + 0.3 * Math.max(0, band));
   ai.aimAngle = stepAngle(ai.aimAngle, desired, turn * dt);
-
   p.mx = Math.cos(ai.aimAngle);
   p.my = Math.sin(ai.aimAngle);
 }

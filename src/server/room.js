@@ -34,6 +34,8 @@ const {
   POWERUP_SPAWN_MS,
   POWERUP_TTL_MS,
   POWERUP_R,
+  POWERUP_SPAWN_TRIES,
+  POWERUP_SPAWN_TOPK,
   BOOST_MS,
   BOOST_MULT,
   FREEZE_MS,
@@ -45,6 +47,9 @@ const {
   POWERUP_TYPES,
   PALETTE,
   SPAWNS,
+  COARSE_ZW,
+  COARSE_ZH,
+  BOT_COARSE_MS,
 } = require('./config');
 
 function now() {
@@ -82,6 +87,37 @@ class Room {
     this.pendingImpacts = [];
     this.visualPaintEvents = [];
     this.emptyAt = 0;              // when the last human left (for reaping)
+    // Coarse "opportunity grid" the bots steer by (rebuilt on an interval).
+    this.coarseBlank = null;      // Int16Array[zones]: unpainted cells per zone
+    this.coarseOwn = null;        // Int16Array[zones*MAX_PLAYERS]: owned per slot
+    this.lastCoarseAt = 0;
+  }
+
+  // Summarize the grid into COARSE_ZW x COARSE_ZH zones so bots can cheaply find
+  // open / contestable territory without each scanning 9000 cells. One O(grid)
+  // pass per room on an interval, shared by all of the room's bots.
+  recomputeCoarse() {
+    const ZW = COARSE_ZW, ZH = COARSE_ZH;
+    const nz = ZW * ZH;
+    if (!this.coarseBlank) {
+      this.coarseBlank = new Int16Array(nz);
+      this.coarseOwn = new Int16Array(nz * MAX_PLAYERS);
+    } else {
+      this.coarseBlank.fill(0);
+      this.coarseOwn.fill(0);
+    }
+    const zcw = GRID_W / ZW, zch = GRID_H / ZH;
+    const grid = this.grid;
+    for (let cy = 0; cy < GRID_H; cy++) {
+      const zRow = Math.min(ZH - 1, (cy / zch) | 0) * ZW;
+      const base = cy * GRID_W;
+      for (let cx = 0; cx < GRID_W; cx++) {
+        const v = grid[base + cx];
+        const z = zRow + Math.min(ZW - 1, (cx / zcw) | 0);
+        if (v === EMPTY) this.coarseBlank[z]++;
+        else this.coarseOwn[z * MAX_PLAYERS + v]++;
+      }
+    }
   }
 
   // ---- population -----------------------------------------------------------
@@ -323,10 +359,26 @@ class Room {
   spawnPowerup() {
     const t = now();
     const margin = 90;
-    const x = margin + Math.random() * (WORLD_W - 2 * margin);
-    const y = margin + Math.random() * (WORLD_H - 2 * margin);
+    // Favor open ground (far from the nearest player) for a fair race, but add
+    // noise: rank candidates by that distance and pick randomly among the top K,
+    // so a lone player can't camp empty space for guaranteed pickups.
+    const actives = [];
+    for (const p of this.players.values()) if (p.slot >= 0) actives.push(p);
+    const cand = [];
+    for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
+      const x = margin + Math.random() * (WORLD_W - 2 * margin);
+      const y = margin + Math.random() * (WORLD_H - 2 * margin);
+      let minD = Infinity;
+      for (const p of actives) {
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < minD) minD = d;
+      }
+      cand.push({ x, y, minD: minD === Infinity ? 0 : minD });
+    }
+    cand.sort((a, b) => b.minD - a.minD);
+    const pick = cand[Math.floor(Math.random() * Math.min(POWERUP_SPAWN_TOPK, cand.length))];
     const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-    this.powerups.push({ id: this.nextPowerupId++, x: Math.round(x), y: Math.round(y), type, expiresAt: t + POWERUP_TTL_MS });
+    this.powerups.push({ id: this.nextPowerupId++, x: Math.round(pick.x), y: Math.round(pick.y), type, expiresAt: t + POWERUP_TTL_MS });
   }
 
   applyPowerup(p, type, t) {
@@ -406,6 +458,8 @@ class Room {
     this.pendingImpacts = [];
     this.visualPaintEvents = [];
     this.lastSpawnAt = now();
+    this.recomputeCoarse();           // fresh (all-blank) grid for round-start targeting
+    this.lastCoarseAt = now();
     this.maintainPopulation();        // top up / release bots to hit MAX_PLAYERS
     this.spawnWaitingSpectators();    // seat humans first, then bots
     for (const p of this.players.values()) {
@@ -453,6 +507,7 @@ class Room {
   tick(dt, doBroadcast) {
     const t = now();
     if (this.phase === 'active') {
+      if (t - this.lastCoarseAt >= BOT_COARSE_MS) { this.recomputeCoarse(); this.lastCoarseAt = t; }
       for (const p of this.players.values()) {
         if (p.slot < 0) continue;
         if (p.isBot) updateBot(p, this, dt, t);
