@@ -273,8 +273,9 @@ function paintField(room, p, enemyVal) {
       if (wx < 0 || wy < 0 || wx >= WORLD_W || wy >= WORLD_H) continue;
       const c = grid[((wy / CELL) | 0) * GRID_W + ((wx / CELL) | 0)];
       n++;
-      if (c === EMPTY) val += 1;
-      else if (c !== p.slot) val += enemyVal;   // own cells score 0 -> avoid re-covering
+      if (c === EMPTY) val += 1;                 // fresh ground: pure gain
+      else if (c === p.slot) val -= 0.4;         // own paint: re-covering = zero gain, steer away
+      else val += enemyVal;                      // rival paint: overpaint swing (scales late/behind)
     }
     if (n) { const w = val / n; vx += dx * w; vy += dy * w; }
   }
