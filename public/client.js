@@ -562,6 +562,7 @@ function brushPose(state, face, dirAngle) {
     state === 'running-right' ||
     state === 'running-left' ||
     state === 'speed' ||
+    state === 'freeze-cast' ||
     state === 'inkjam-cast' ||
     state === 'inkjam-disabled-moving' ||
     state === 'missile-cast';
