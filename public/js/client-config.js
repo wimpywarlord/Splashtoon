@@ -28,7 +28,6 @@
         'inkjam-cast': { row: 6, frames: 7, rate: 90 },
         'missile-cast': { row: 7, frames: 6, rate: 75 },
         'inkjam-disabled': { row: 8, frames: 6, rate: 120 },
-        'inkjam-disabled-moving': { row: 6, frames: 7, rate: 110 },
       },
     },
     PET_DRAW_H: 78,
