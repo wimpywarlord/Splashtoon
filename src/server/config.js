@@ -10,8 +10,22 @@ const WORLD_H = GRID_H * CELL;
 const EMPTY = 255;
 
 const MAX_PLAYERS = 8;
-const TICK_HZ = 30;
-const TICK_MS = 1000 / TICK_HZ;
+
+// Netcode: simulate physics fast for crisp motion/collisions, but only push a
+// state snapshot to clients at the lower broadcast rate (clients interpolate
+// remotes between snapshots). BROADCAST_EVERY sim ticks => one broadcast.
+const SIM_HZ = 60;
+const SIM_MS = 1000 / SIM_HZ;
+const BROADCAST_HZ = 30;
+const BROADCAST_EVERY = Math.round(SIM_HZ / BROADCAST_HZ);
+// Back-compat aliases (some tooling/logs referenced the old single tick rate).
+const TICK_HZ = BROADCAST_HZ;
+const TICK_MS = SIM_MS;
+
+// Multi-room: every room is kept topped up to MAX_PLAYERS with bots. Rooms with
+// no humans are torn down after a grace window so abandoned bot games don't leak.
+const MAX_ROOMS = 50;
+const ROOM_EMPTY_GRACE_MS = 30_000;
 
 const MAX_SPEED = 230;
 const ACCEL = 2000;
@@ -72,6 +86,12 @@ module.exports = {
   WORLD_H,
   EMPTY,
   MAX_PLAYERS,
+  SIM_HZ,
+  SIM_MS,
+  BROADCAST_HZ,
+  BROADCAST_EVERY,
+  MAX_ROOMS,
+  ROOM_EMPTY_GRACE_MS,
   TICK_HZ,
   TICK_MS,
   MAX_SPEED,

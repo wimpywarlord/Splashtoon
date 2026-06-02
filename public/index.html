@@ -17,6 +17,7 @@
     <div id="hud">
       <div id="timer">2:00</div>
       <div id="scoreboard"></div>
+      <button id="mute-btn" class="icon-btn" type="button" aria-label="Toggle sound" aria-pressed="false">🔊</button>
     </div>
 
     <!-- Spectator banner -->
@@ -33,12 +34,36 @@
         <div id="result-title" class="big">ROUND OVER</div>
         <div id="result-list"></div>
         <div class="sub">Next round in <span id="next-countdown">10</span>s</div>
+        <button id="results-menu-btn" class="btn btn-ghost" type="button">Leave to menu</button>
+      </div>
+    </div>
+
+    <!-- Start screen (slither-style: name + Play). Connection opens on Play. -->
+    <div id="start" class="overlay">
+      <div class="card start-card">
+        <div class="logo">Splash<span>toon</span></div>
+        <div class="tagline">Paint the most. Outlast the rest.</div>
+        <form id="start-form" class="start-form" autocomplete="off">
+          <label class="field">
+            <span class="field-label">Name</span>
+            <input id="name-input" class="input" type="text" maxlength="16" placeholder="Player" spellcheck="false" />
+          </label>
+          <button id="play-btn" class="btn btn-primary" type="submit">Play</button>
+        </form>
+        <div id="stats" class="stats"></div>
+        <div class="controls-hint">
+          Move with <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
+          or the arrow keys — you paint as you move.
+        </div>
+        <button id="sound-toggle" class="link-btn" type="button">Sound: On</button>
       </div>
     </div>
 
   </div>
 
   <script src="/js/client-config.js"></script>
+  <script src="/js/store.js"></script>
+  <script src="/js/audio.js"></script>
   <script src="/client.js"></script>
 </body>
 </html>

@@ -47,6 +47,7 @@ powerupSheet.src = '/assets/powerups.png';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const ARENA_BG = '#14171f';   // dark arena surface; neon paint and brushes pop against it
 ctx.imageSmoothingEnabled = true;   // smooth sprite + paint scaling (was pixelated)
 
 const els = {
@@ -58,7 +59,17 @@ const els = {
   resultTitle: document.getElementById('result-title'),
   resultList: document.getElementById('result-list'),
   nextCountdown: document.getElementById('next-countdown'),
+  start: document.getElementById('start'),
+  startForm: document.getElementById('start-form'),
+  nameInput: document.getElementById('name-input'),
+  stats: document.getElementById('stats'),
+  muteBtn: document.getElementById('mute-btn'),
+  soundToggle: document.getElementById('sound-toggle'),
+  resultsMenuBtn: document.getElementById('results-menu-btn'),
 };
+
+const GameAudio = window.SplashtoonAudio;
+const Store = window.SplashtoonStore;
 
 const stage = document.getElementById('stage');
 const stageFrame = document.getElementById('stage-frame');
@@ -77,6 +88,11 @@ let spectating = true;
 let phase = 'active';
 let timeLeftMs = 90000;
 let scores = [];
+
+let myName = '';
+let slotNames = {};       // slot -> display name, rebuilt from each player list
+let inMenu = true;        // on the start screen (not connected to a match)
+let lastTickSecond = -1;  // for one-shot countdown ticks
 
 // Other players: id -> render/target state.
 const remote = new Map();
@@ -98,9 +114,26 @@ let paintCtx = null;
 let ws = null;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}`);
+  const params = myName ? `?name=${encodeURIComponent(myName)}` : '';
+  ws = new WebSocket(`${proto}://${location.host}/${params}`);
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
-  ws.onclose = () => setTimeout(connect, 1000);
+  // Reconnect only while in a match; leaving to the menu closes deliberately.
+  ws.onclose = () => { if (!inMenu) setTimeout(connect, 1000); };
+}
+
+function disconnect() {
+  inMenu = true;
+  if (ws) {
+    try { ws.onclose = null; ws.close(); } catch (_) { /* ignore */ }
+    ws = null;
+  }
+  remote.clear();
+  me.has = false;
+  spectating = true;
+  scores = [];
+  slotNames = {};
+  powerups = [];
+  if (GameAudio) GameAudio.movement(0);
 }
 
 function send(obj) {
@@ -116,6 +149,7 @@ function handle(msg) {
       palette = msg.palette;
       paletteRGB = palette.map(hexToRGB);
       mySlot = msg.you.slot;
+      if (msg.you.name) myName = msg.you.name;   // server may assign a fallback
       spectating = msg.you.spectating;
       phase = msg.phase;
       timeLeftMs = msg.timeLeftMs;
@@ -135,6 +169,8 @@ function handle(msg) {
       resetTrailAnchors();
       hide(els.results);
       refreshOverlays();
+      lastTickSecond = -1;
+      if (GameAudio && !spectating) GameAudio.spawn();
       break;
     }
     case 'state': {
@@ -154,6 +190,7 @@ function handle(msg) {
       if (Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
         pickupFades.push({ x: msg.x, y: msg.y, type: msg.type || 'speed', start: nowMs });
       }
+      if (GameAudio) GameAudio.pickup(msg.type || 'speed');
       break;
     }
     case 'impact': {
@@ -161,6 +198,7 @@ function handle(msg) {
       if (Array.isArray(msg.blobs)) drawPaintSplatter(msg.blobs, msg.slot);
       else drawPaintDisc(msg.x, msg.y, msg.r, msg.slot);
       impacts.push({ x: msg.x, y: msg.y, r: msg.r, slot: msg.slot, start: nowMs });
+      if (GameAudio) GameAudio.impact();
       break;
     }
     case 'roundover': {
@@ -172,6 +210,14 @@ function handle(msg) {
       me.vy = 0;
       me.speed = 0;
       resetTrailAnchors();
+      const won = msg.winnerSlot === mySlot && !spectating;
+      if (!spectating && Store) {
+        const total = G.w * G.h;
+        const myPct = total ? ((msg.scores[mySlot] || 0) / total) * 100 : 0;
+        Store.recordResult(myPct, won);
+        renderStats();
+      }
+      if (GameAudio) GameAudio.roundEnd(won);
       showResults(msg);
       break;
     }
@@ -181,10 +227,12 @@ function handle(msg) {
 // ---- Players ----------------------------------------------------------------
 function applyPlayers(list, snap) {
   const seen = new Set();
+  const ns = {};
   let foundMe = false;
 
   for (const pl of list) {
     seen.add(pl.id);
+    ns[pl.slot] = pl.name || `P${pl.slot + 1}`;
     if (pl.id === myId) {
       foundMe = true;
       mySlot = pl.slot;
@@ -223,6 +271,8 @@ function applyPlayers(list, snap) {
     r.tx = pl.x; r.ty = pl.y;
     if (snap) { r.rx = pl.x; r.ry = pl.y; r.dirAngle = 0; r.lastPaintX = undefined; }
   }
+
+  slotNames = ns;
 
   // Drop players no longer present.
   for (const id of remote.keys()) if (!seen.has(id)) remote.delete(id);
@@ -407,7 +457,16 @@ function pushInput() {
   }
 }
 
+// Ignore game input while on the menu or while typing in a field (so WASD types
+// the name instead of steering).
+function inputBlocked(e) {
+  if (inMenu) return true;
+  const tag = e.target && e.target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA';
+}
+
 window.addEventListener('keydown', (e) => {
+  if (inputBlocked(e)) return;
   const d = KEYMAP[e.code];
   if (d === undefined) return;
   e.preventDefault();
@@ -417,6 +476,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
+  if (inputBlocked(e)) return;
   const d = KEYMAP[e.code];
   if (d === undefined) return;
   e.preventDefault();
@@ -525,7 +585,7 @@ function hslToRgb(h, s, l) {
 function getTintedSheet(slot) {
   if (tintedSheets[slot]) return tintedSheets[slot];
   if (!petReady || !paletteRGB[slot]) return null;
-  const targetHue = rgbToHsl(paletteRGB[slot][0], paletteRGB[slot][1], paletteRGB[slot][2])[0];
+  const [targetHue, targetSat, targetL] = rgbToHsl(paletteRGB[slot][0], paletteRGB[slot][1], paletteRGB[slot][2]);
   const c = document.createElement('canvas');
   c.width = petSheet.naturalWidth; c.height = petSheet.naturalHeight;
   const g = c.getContext('2d');
@@ -536,7 +596,12 @@ function getTintedSheet(slot) {
     if (d[i + 3] < 8) continue;
     const [h, s, l] = rgbToHsl(d[i], d[i + 1], d[i + 2]);
     if (s > 0.22 && h >= 285 && h <= 355) {   // pink/magenta paint -> player hue
-      const [nr, ng, nb] = hslToRgb(targetHue, s, l);
+      // Pure hue-swap leaves the source pink's saturation/lightness, which washes
+      // out bright targets (yellow) and lets warm ones blend into the brush handle.
+      // Bias saturation toward the target and temper highlights so every hue reads.
+      const ns = Math.min(1, s * 0.45 + targetSat * 0.6);
+      const nl = l > 0.5 ? 0.5 + (l - 0.5) * (1 - 0.45 * targetL) : l;
+      const [nr, ng, nb] = hslToRgb(targetHue, ns, nl);
       d[i] = nr; d[i + 1] = ng; d[i + 2] = nb;
     }
   }
@@ -675,7 +740,7 @@ function drawPowerup(pu) {
 
 function render() {
   ctx.clearRect(0, 0, G.worldW, G.worldH);
-  ctx.fillStyle = '#14171f';
+  ctx.fillStyle = ARENA_BG;
   ctx.fillRect(0, 0, G.worldW, G.worldH);
 
   if (paintLayer) ctx.drawImage(paintLayer, 0, 0);  // 1:1, world-resolution
@@ -724,6 +789,15 @@ function updateHUD() {
   els.timer.textContent = fmtTime(timeLeftMs);
   els.timer.classList.toggle('urgent', phase === 'active' && timeLeftMs <= 10000);
 
+  // One-shot countdown ticks in the final 10 seconds (driven by the displayed
+  // clock so they're smooth between the 30Hz state updates).
+  const secs = Math.ceil(timeLeftMs / 1000);
+  if (phase === 'active' && secs >= 1 && secs <= 10) {
+    if (secs !== lastTickSecond) { lastTickSecond = secs; if (GameAudio) GameAudio.tick(secs); }
+  } else if (phase !== 'active') {
+    lastTickSecond = -1;
+  }
+
   const total = G.w * G.h;
   const rows = [];
   for (let s = 0; s < scores.length; s++) {
@@ -735,10 +809,10 @@ function updateHUD() {
   els.scoreboard.innerHTML = rows.map((row) => {
     const pct = ((row.score / total) * 100).toFixed(1);
     const meCls = row.slot === mySlot && !spectating ? ' me' : '';
-    const name = row.slot === mySlot && !spectating ? 'You' : `P${row.slot + 1}`;
+    const name = slotNames[row.slot] || `P${row.slot + 1}`;
     return `<div class="score-row${meCls}">
       <span class="swatch" style="background:${palette[row.slot]}"></span>
-      <span class="score-name">${name}</span>
+      <span class="score-name">${escapeHtml(name)}</span>
       <span class="score-pct">${pct}%</span>
     </div>`;
   }).join('');
@@ -757,7 +831,8 @@ function showResults(msg) {
   } else if (msg.winnerSlot === mySlot && !spectating) {
     els.resultTitle.textContent = 'YOU WIN!';
   } else if (msg.winnerSlot >= 0) {
-    els.resultTitle.textContent = `P${msg.winnerSlot + 1} WINS`;
+    // textContent (not innerHTML) -> winner name needs no escaping here.
+    els.resultTitle.textContent = `${msg.winnerName || ('P' + (msg.winnerSlot + 1))} WINS`;
   } else {
     els.resultTitle.textContent = 'ROUND OVER';
   }
@@ -768,10 +843,11 @@ function showResults(msg) {
     .sort((a, b) => b.score - a.score);
   els.resultList.innerHTML = rows.map((r) => {
     const pct = ((r.score / total) * 100).toFixed(1);
-    const name = r.slot === mySlot && !spectating ? 'You' : `P${r.slot + 1}`;
-    return `<div class="result-row">
+    const meCls = r.slot === mySlot && !spectating ? ' me' : '';
+    const name = slotNames[r.slot] || `P${r.slot + 1}`;
+    return `<div class="result-row${meCls}">
       <span class="swatch" style="background:${palette[r.slot]}"></span>
-      <span class="score-name" style="flex:1">${name}</span>
+      <span class="score-name" style="flex:1">${escapeHtml(name)}</span>
       <span>${pct}%</span>
     </div>`;
   }).join('') || '<div class="sub">Nobody painted anything!</div>';
@@ -803,6 +879,10 @@ function frame(t) {
   paintTrails();   // accumulate smooth paint onto the persistent layer
   render();
   updateHUD();
+  if (GameAudio && !inMenu) {
+    const lvl = (me.has && !spectating && phase === 'active') ? me.speed / MAX_SPEED : 0;
+    GameAudio.movement(lvl);
+  }
   requestAnimationFrame(frame);
 }
 
@@ -868,7 +948,72 @@ function b64ToBytes(b64) {
   return out;
 }
 
+// ---- Menu / scene + audio + stats UI ---------------------------------------
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function renderStats() {
+  if (!els.stats) return;
+  const s = Store ? Store.getStats() : null;
+  if (!s || !s.matches) { els.stats.innerHTML = ''; return; }
+  const cells = [
+    ['Wins', s.wins],
+    ['Best %', s.bestCoverage.toFixed(1)],
+    ['Streak', s.bestStreak],
+  ];
+  els.stats.innerHTML = cells.map(([label, val]) =>
+    `<div class="stat"><div class="stat-value">${escapeHtml(val)}</div><div class="stat-label">${label}</div></div>`
+  ).join('');
+}
+
+function syncSoundUI() {
+  const muted = GameAudio ? GameAudio.isMuted() : (Store ? Store.getAudio().muted : false);
+  if (els.muteBtn) {
+    els.muteBtn.textContent = muted ? '🔇' : '🔊';
+    els.muteBtn.setAttribute('aria-pressed', String(muted));
+  }
+  if (els.soundToggle) els.soundToggle.textContent = `Sound: ${muted ? 'Off' : 'On'}`;
+}
+
+function toggleSound() {
+  const muted = GameAudio ? !GameAudio.isMuted() : true;
+  if (GameAudio) { GameAudio.unlock(); GameAudio.setMuted(muted); }
+  if (Store) Store.setAudio({ muted });
+  syncSoundUI();
+}
+
+function initMenu() {
+  inMenu = true;
+  if (Store && els.nameInput) {
+    const saved = Store.getName();
+    if (saved) els.nameInput.value = saved;
+  }
+  renderStats();
+  syncSoundUI();
+  show(els.start);
+  hide(els.spectate);
+  hide(els.results);
+  setTimeout(() => { if (els.nameInput) els.nameInput.focus(); }, 60);
+}
+
+function startPlay() {
+  myName = (els.nameInput ? els.nameInput.value : '').trim().slice(0, 16);
+  if (Store) Store.setName(myName);
+  inMenu = false;
+  if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture
+  hide(els.start);
+  connect();
+}
+
+if (els.startForm) els.startForm.addEventListener('submit', (e) => { e.preventDefault(); startPlay(); });
+if (els.muteBtn) els.muteBtn.addEventListener('click', toggleSound);
+if (els.soundToggle) els.soundToggle.addEventListener('click', toggleSound);
+if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', () => { disconnect(); initMenu(); });
+
 // ---- Boot -------------------------------------------------------------------
 resize();
-connect();
 requestAnimationFrame(frame);
+initMenu();
