@@ -38,12 +38,13 @@ const DAMPING_PER_SEC = 4.0;     // higher = snappier stop, less drift
 const BRUSH_R = 16;              // px paint radius
 const STAMP_STEP = BRUSH_R / 2;  // segment stamp spacing to avoid gaps at speed
 
-const ROUND_MS = 45_000;
-const INTERMISSION_MS = 6_000;
+const ROUND_MS = 120_000;
+const INTERMISSION_MS = 10_000;
 
-// Powerups (v1: a single "speed" type).
+// Powerups.
 const POWERUP_MAX = 2;            // max simultaneous pickups on the board
 const POWERUP_SPAWN_MS = 13_000;  // interval between spawn attempts
+const POWERUP_TTL_MS = 6_000;     // unclaimed pickup lifetime
 const POWERUP_R = 18;            // pickup half-size (px)
 const BOOST_MS = 5_000;          // speed boost duration
 const BOOST_MULT = 1.8;          // multiplier on MAX_SPEED and ACCEL while boosted
@@ -270,11 +271,12 @@ function stepPlayer(p, dt) {
 // Powerups
 // ----------------------------------------------------------------------------
 function spawnPowerup() {
+  const t = now();
   const margin = 90;
   const x = margin + Math.random() * (WORLD_W - 2 * margin);
   const y = margin + Math.random() * (WORLD_H - 2 * margin);
   const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-  powerups.push({ id: nextPowerupId++, x: Math.round(x), y: Math.round(y), type });
+  powerups.push({ id: nextPowerupId++, x: Math.round(x), y: Math.round(y), type, expiresAt: t + POWERUP_TTL_MS });
 }
 
 // Apply a grabbed powerup. Speed buffs the grabber; freeze/inkjam debuff rivals.
@@ -316,6 +318,9 @@ function processImpacts(t) {
 }
 
 function updatePowerups(t) {
+  if (powerups.length) {
+    powerups = powerups.filter((pu) => t < pu.expiresAt);
+  }
   // Spawn up to the cap on a fixed cadence.
   if (powerups.length < POWERUP_MAX && t - lastSpawnAt >= POWERUP_SPAWN_MS) {
     spawnPowerup();
@@ -330,7 +335,7 @@ function updatePowerups(t) {
       if (Math.hypot(p.x - pu.x, p.y - pu.y) <= reach) {
         powerups.splice(i, 1);
         applyPowerup(p, pu.type, t);
-        broadcast({ t: 'pickup', id: p.id, slot: p.slot, type: pu.type });
+        broadcast({ t: 'pickup', id: p.id, slot: p.slot, type: pu.type, x: pu.x, y: pu.y });
       }
     }
   }

@@ -8,41 +8,57 @@
 // Physics constants MUST mirror server.js for clean prediction.
 const MAX_SPEED = 230;
 const ACCEL = 2000;
+const BOOST_MULT = 1.8;
 const DAMPING_PER_SEC = 4.0;
 const BRUSH_R = 16;
 const MOVE_EPS = 14;          // speed (px/s) above which the brush plays its run cycle
+const DRIFT_EPS = 3.5;        // keep a deceleration/drift pose until motion is visually dead
 const FACE_EPS = 18;          // |vx| needed to flip left/right facing (hysteresis -> no flicker)
-const EMOTE_MS = 650;         // pickup celebration duration
 
-// Animated brush-pet spritesheet: 8 cols x 9 rows, 192x208 cells; each row is one
-// animation state. The pink "paint" is recolored to each player's color at load.
+// Animated brush-spirit spritesheet: 8 cols x 9 rows, 192x208 cells. Rows are
+// game-specific brush/powerup interaction states. The pink paint is recolored
+// to each player's color at load.
 const PET = {
   cellW: 192, cellH: 208,
   states: {
-    'idle':          { row: 0, frames: 6, rate: 150 },
-    'running-right': { row: 1, frames: 8, rate: 70 },
-    'running-left':  { row: 2, frames: 8, rate: 70 },
-    'waving':        { row: 3, frames: 4, rate: 110 },
-    'jumping':       { row: 4, frames: 5, rate: 85 },
-    'failed':        { row: 5, frames: 8, rate: 90 },
-    'waiting':       { row: 6, frames: 6, rate: 150 },
-    'running':       { row: 7, frames: 6, rate: 75 },
-    'review':        { row: 8, frames: 6, rate: 120 },
+    'idle':             { row: 0, frames: 6, rate: 170 },
+    'running-right':    { row: 1, frames: 7, rate: 70 },
+    'running-left':     { row: 2, frames: 7, rate: 70 },
+    'speed':            { row: 3, frames: 7, rate: 64 },
+    'drift':            { row: 1, frames: 7, rate: 118 },
+    'freeze-cast':      { row: 4, frames: 6, rate: 90 },
+    'frozen-disabled':  { row: 5, frames: 6, rate: 120 },
+    'inkjam-cast':      { row: 6, frames: 7, rate: 90 },
+    'missile-cast':     { row: 7, frames: 6, rate: 75 },
+    'inkjam-disabled':  { row: 8, frames: 6, rate: 120 },
   },
 };
-const PET_DRAW_H = 62;         // on-screen cell height (px) — smaller brush
-const IDLE_BASE_FACE = 1;      // which way the idle/neutral art faces (1 = right); mirror otherwise
+const PET_DRAW_H = 78;         // on-screen cell height (px)
+const PET_IDLE_DRAW_H = 64;    // idle should sit smaller than action states
 const PET_ANCHOR_Y = 0.62;     // fraction of the cell aligned to the brush's floor point
 const TRAIL_W = 26;            // smooth paint-ribbon width (px)
+const SNAPSHOT_STAMP_PX = 16;  // smooth spectator snapshots without bloating like live strokes
 const petSheet = new Image();
 let petReady = false;
 petSheet.onload = () => { petReady = true; };
-petSheet.src = '/assets/brush-pet.webp';
+petSheet.src = '/assets/brush-spirit.png';
 const tintedSheets = {};       // slot -> recolored <canvas>
+let snapshotStamps = [];       // slot -> small rounded cell stamp for grid snapshots
 
-// Solid paint stamps (bold, clean ribbons like Battle Painters), one per color.
-const STAMP_PX = 32;
-let stamps = [];
+// Generated powerup spritesheet: 4 cols x 3 rows, 362x362 cells.
+// Runtime intentionally uses only the base active row; pickup feedback is a
+// clean fade-out, not a burst/expansion animation.
+const POWERUP_SHEET = {
+  cellW: 362,
+  cellH: 362,
+  cols: { speed: 0, freeze: 1, inkjam: 2, missile: 3 },
+  rows: { active: 0 },
+};
+const POWERUP_FADE_MS = 850;
+const powerupSheet = new Image();
+let powerupReady = false;
+powerupSheet.onload = () => { powerupReady = true; };
+powerupSheet.src = '/assets/powerups.png';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -78,11 +94,12 @@ let scores = [];
 const remote = new Map();
 
 // Own predicted brush.
-const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, speed: 0, boost: false, frozen: false, noPaint: false, emoteUntil: 0 };
+const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, dirAngle: 0, speed: 0, boost: false, frozen: false, noPaint: false };
 
-// Active powerups on the board, and a monotonic clock used for animation/emotes.
+// Active powerups on the board, transient render effects, and animation clock.
 let powerups = [];
 let impacts = [];          // missile-shower craters being animated: [{x,y,r,slot,start}]
+let pickupFades = [];      // fading pickup icons: [{x,y,type,start}]
 let nowMs = 0;
 
 // Paint layer at grid resolution (1px per cell), scaled up on draw.
@@ -115,7 +132,6 @@ function handle(msg) {
       phase = msg.phase;
       timeLeftMs = msg.timeLeftMs;
       initPaintLayer();
-      makeStamps();
       resize();
       break;
     }
@@ -125,8 +141,10 @@ function handle(msg) {
       scores = msg.scores;
       powerups = msg.powerups || [];
       impacts = [];
+      pickupFades = [];
       applySnapshot(msg.cells);
       applyPlayers(msg.players, true);
+      resetTrailAnchors();
       hide(els.results);
       refreshOverlays();
       break;
@@ -143,9 +161,11 @@ function handle(msg) {
       break;
     }
     case 'pickup': {
-      // Pickup celebration (wiggle + sparkles) for whoever grabbed a powerup.
-      const target = msg.id === myId ? me : remote.get(msg.id);
-      if (target) target.emoteUntil = nowMs + EMOTE_MS;
+      // Fade the collected board icon in place. Brush status changes only for
+      // actual ongoing effects, not for a decorative pickup splash.
+      if (Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
+        pickupFades.push({ x: msg.x, y: msg.y, type: msg.type || 'speed', start: nowMs });
+      }
       break;
     }
     case 'impact': {
@@ -160,6 +180,12 @@ function handle(msg) {
     case 'roundover': {
       phase = 'intermission';
       scores = msg.scores;
+      held.clear();
+      pushInput();
+      me.vx = 0;
+      me.vy = 0;
+      me.speed = 0;
+      resetTrailAnchors();
       showResults(msg);
       break;
     }
@@ -180,17 +206,19 @@ function applyPlayers(list, snap) {
       me.frozen = !!pl.frozen;
       me.noPaint = !!pl.noPaint;
       if (!me.has) {            // first authoritative position -> adopt it
-        me.x = pl.x; me.y = pl.y; me.vx = 0; me.vy = 0; me.has = true; me.lastPaintX = undefined;
+        me.x = pl.x; me.y = pl.y; me.vx = 0; me.vy = 0; me.dirAngle = 0; me.has = true; me.lastPaintX = undefined;
       } else if (snap) {        // round reset -> snap to spawn
-        me.x = pl.x; me.y = pl.y; me.vx = 0; me.vy = 0; me.lastPaintX = undefined;
+        me.x = pl.x; me.y = pl.y; me.vx = 0; me.vy = 0; me.dirAngle = 0; me.lastPaintX = undefined;
       }
       me.serverX = pl.x; me.serverY = pl.y;
       continue;
     }
     let r = remote.get(pl.id);
     if (!r) {
-      r = { slot: pl.slot, rx: pl.x, ry: pl.y, tx: pl.x, ty: pl.y,
-            face: 1, speed: 0, boost: false, emoteUntil: 0 };
+      r = {
+        slot: pl.slot, rx: pl.x, ry: pl.y, tx: pl.x, ty: pl.y,
+        face: 1, dirAngle: 0, speed: 0, boost: false, frozen: false, noPaint: false,
+      };
       remote.set(pl.id, r);
     }
     r.slot = pl.slot;
@@ -201,8 +229,9 @@ function applyPlayers(list, snap) {
     const dx = pl.x - r.tx, dy = pl.y - r.ty;
     r.speed = snap ? 0 : Math.hypot(dx, dy) * 30;   // ~px/s at the 30Hz tick
     if (dx > 0.4) r.face = 1; else if (dx < -0.4) r.face = -1;
+    if (!snap && Math.hypot(dx, dy) > 0.35) r.dirAngle = Math.atan2(dy, dx);
     r.tx = pl.x; r.ty = pl.y;
-    if (snap) { r.rx = pl.x; r.ry = pl.y; r.lastPaintX = undefined; }
+    if (snap) { r.rx = pl.x; r.ry = pl.y; r.dirAngle = 0; r.lastPaintX = undefined; }
   }
 
   // Drop players no longer present.
@@ -222,37 +251,41 @@ function initPaintLayer() {
   paintCtx.imageSmoothingEnabled = true;
 }
 
-// Pre-render one SOLID, clean-edged paint stamp per palette color. Overlapping
-// stamps along a brush path union into bold rounded ribbons (Battle Painters look).
-function makeStamps() {
-  stamps = palette.map((hex) => {
+function makeSnapshotStamps() {
+  snapshotStamps = palette.map((hex) => {
     const c = document.createElement('canvas');
-    c.width = c.height = STAMP_PX;
+    c.width = c.height = SNAPSHOT_STAMP_PX;
     const g = c.getContext('2d');
-    const m = STAMP_PX / 2;
+    const m = SNAPSHOT_STAMP_PX / 2;
     g.fillStyle = hex;
-    g.beginPath(); g.arc(m, m, m - 1, 0, Math.PI * 2); g.fill();
+    g.beginPath();
+    g.arc(m, m, m, 0, Math.PI * 2);
+    g.fill();
     return c;
   });
 }
 
-function stampCell(slot, idx) {
-  const img = stamps[slot];
+function drawSnapshotCell(slot, idx) {
+  const img = snapshotStamps[slot];
   if (!img) return;
   const cx = idx % G.w;
   const cy = (idx - cx) / G.w;
   const wx = cx * G.cell + G.cell / 2;
   const wy = cy * G.cell + G.cell / 2;
-  paintCtx.drawImage(img, wx - STAMP_PX / 2, wy - STAMP_PX / 2);
+  paintCtx.drawImage(img, wx - SNAPSHOT_STAMP_PX / 2, wy - SNAPSHOT_STAMP_PX / 2);
 }
 
 function applySnapshot(b64) {
   if (!paintCtx) initPaintLayer();
-  if (!stamps.length) makeStamps();
+  if (snapshotStamps.length !== palette.length) makeSnapshotStamps();
   const bytes = b64ToBytes(b64);
   paintCtx.clearRect(0, 0, G.worldW, G.worldH);
+
+  // Snapshot cells are authoritative score-grid data, not live brush motion.
+  // Use a bounded rounded stamp so spectators joining mid-round see smooth
+  // paint, without the oversized cloudy blobs caused by the live stroke width.
   for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] !== 255) stampCell(bytes[i], i);
+    if (bytes[i] !== 255) drawSnapshotCell(bytes[i], i);
   }
 }
 
@@ -260,11 +293,24 @@ function applySnapshot(b64) {
 // its CURRENT on-screen position. Same position as the sprite -> always in unison,
 // never leading, and continuous round-capped strokes read as flowing paint.
 function paintTrails() {
+  if (phase !== 'active') {
+    resetTrailAnchors();
+    return;
+  }
   if (!paintCtx) return;
   paintCtx.lineCap = 'round';
   paintCtx.lineJoin = 'round';
   if (me.has && !spectating) strokeSeg(me, mySlot, me.x, me.y);
   for (const r of remote.values()) strokeSeg(r, r.slot, r.rx, r.ry);
+}
+
+function resetTrailAnchors() {
+  me.lastPaintX = undefined;
+  me.lastPaintY = undefined;
+  for (const r of remote.values()) {
+    r.lastPaintX = undefined;
+    r.lastPaintY = undefined;
+  }
 }
 
 function strokeSeg(b, slot, cx, cy) {
@@ -336,21 +382,32 @@ window.addEventListener('blur', () => { held.clear(); pushInput(); });
 // ---- Prediction + interpolation --------------------------------------------
 function predict(dt) {
   if (!me.has) return;
+  if (phase !== 'active') {
+    me.vx = 0; me.vy = 0; me.speed = 0;
+    if (me.serverX !== undefined) {
+      me.x += (me.serverX - me.x) * 0.35;
+      me.y += (me.serverY - me.y) * 0.35;
+    }
+    return;
+  }
   if (me.frozen) {                      // frozen by a rival: locked in place
     me.vx = 0; me.vy = 0; me.speed = 0;
     if (me.serverX !== undefined) { me.x += (me.serverX - me.x) * 0.2; me.y += (me.serverY - me.y) * 0.2; }
     return;
   }
   const { mx, my } = currentInput();
+  const accel = me.boost ? ACCEL * BOOST_MULT : ACCEL;
+  const maxSpeed = me.boost ? MAX_SPEED * BOOST_MULT : MAX_SPEED;
   if (mx || my) {
     const len = Math.hypot(mx, my);   // normalize so diagonals aren't faster
-    me.vx += (mx / len) * ACCEL * dt;
-    me.vy += (my / len) * ACCEL * dt;
+    me.dirAngle = Math.atan2(my, mx);
+    me.vx += (mx / len) * accel * dt;
+    me.vy += (my / len) * accel * dt;
   }
   const damp = Math.exp(-DAMPING_PER_SEC * dt);
   me.vx *= damp; me.vy *= damp;
   const sp = Math.hypot(me.vx, me.vy);
-  if (sp > MAX_SPEED) { const k = MAX_SPEED / sp; me.vx *= k; me.vy *= k; }
+  if (sp > maxSpeed) { const k = maxSpeed / sp; me.vx *= k; me.vy *= k; }
 
   me.x += me.vx * dt;
   me.y += me.vy * dt;
@@ -368,6 +425,7 @@ function predict(dt) {
   me.speed = Math.hypot(me.vx, me.vy);
   if (me.vx > FACE_EPS) me.face = 1;
   else if (me.vx < -FACE_EPS) me.face = -1;
+  if (me.speed > DRIFT_EPS) me.dirAngle = Math.atan2(me.vy, me.vx);
 }
 
 function interpolateRemotes() {
@@ -426,181 +484,117 @@ function getTintedSheet(slot) {
   return c;
 }
 
-function petState(speed, face, emoteT) {
-  if (nowMs < emoteT) return 'jumping';
-  if (speed > MOVE_EPS) return face >= 0 ? 'running-right' : 'running-left';
+function petState(speed, boost, frozen, noPaint) {
+  if (frozen) return 'frozen-disabled';
+  if (noPaint) return 'inkjam-disabled';
+  if (boost) return 'speed';
+  if (speed > MOVE_EPS) return 'running-right';
+  if (speed > DRIFT_EPS) return 'drift';
   return 'idle';
 }
 
-// Draw an animated brush-pet sprite, recolored to the player, with glow + FX.
-function drawBrushSprite(x, y, slot, face, speed, isMe, boost, frozen, noPaint, emoteT) {
-  const col = palette[slot] || '#fff';
+function brushPose(state, face, dirAngle) {
+  const directional = state === 'running-right' || state === 'running-left' || state === 'drift' || state === 'speed';
+  if (!directional) return { rowState: state, flipX: 1, directional: false };
 
-  // Boost aura.
-  if (boost) {
-    const pulse = 0.5 + 0.5 * Math.sin(nowMs / 60);
-    ctx.save();
-    ctx.globalAlpha = 0.22 + 0.2 * pulse; ctx.fillStyle = col;
-    ctx.beginPath(); ctx.ellipse(x, y + 4, 26 * (0.85 + 0.2 * pulse), 12, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+  const fallback = face < 0 ? Math.PI : 0;
+  const heading = Number.isFinite(dirAngle) ? dirAngle : fallback;
+  const cos = Math.cos(heading);
+  const headingLeft = cos < -0.08 || (Math.abs(cos) <= 0.08 && face < 0);
+
+  if (state === 'speed') {
+    return { rowState: 'speed', flipX: headingLeft ? -1 : 1, directional: true };
   }
-  // Colored ground glow (identity) + "you" ring.
+  return { rowState: headingLeft ? 'running-left' : 'running-right', flipX: 1, directional: true };
+}
+
+function drawGroundShadow(x, y, rx, ry, alpha = 0.32) {
   ctx.save();
-  ctx.globalAlpha = 0.5; ctx.fillStyle = col;
-  ctx.beginPath(); ctx.ellipse(x, y + 5, 17, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+  const g = ctx.createRadialGradient(x, y, 1, x, y, Math.max(rx, ry));
+  g.addColorStop(0, `rgba(0,0,0,${alpha})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Draw the in-game brush spirit. The atlas owns pose; runtime only selects a
+// row and mirrors speed-left. Do not rotate brush sprites to fake direction.
+function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint) {
+  const col = palette[slot] || '#fff';
+  const state = petState(speed, boost, frozen, noPaint);
+  const pose = brushPose(state, face, dirAngle);
+  const st = PET.states[state] || PET.states.idle;
+  const rowSt = PET.states[pose.rowState] || st;
+  const ts = getTintedSheet(slot);
+  if (!ts) return;
+  const idleScale = state === 'idle' ? PET_IDLE_DRAW_H / PET_DRAW_H : 1;
+
+  // Colored ground glow (identity) + "you" ring.
+  drawGroundShadow(x, y + 12, 21 * idleScale, 7 * idleScale, frozen ? 0.2 : 0.34);
+  ctx.save();
+  ctx.globalAlpha = frozen ? 0.22 : 0.42; ctx.fillStyle = col;
+  ctx.beginPath(); ctx.ellipse(x, y + 9, 14 * idleScale, 5 * idleScale, 0, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
   if (isMe) {
     ctx.save();
     ctx.globalAlpha = 0.95; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.ellipse(x, y + 5, 19, 7.5, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(x, y + 9, 16 * idleScale, 6 * idleScale, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
 
-  const ts = getTintedSheet(slot);
-  if (!ts) {                       // still loading -> simple colored disc
-    ctx.save(); ctx.fillStyle = col;
-    ctx.beginPath(); ctx.arc(x, y - 6, 12, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    return;
-  }
-
-  const state = petState(speed, face, emoteT);
-  const st = PET.states[state];
   const frame = Math.floor(nowMs / st.rate) % st.frames;
-  const sx = frame * PET.cellW, sy = st.row * PET.cellH;
-  const scale = PET_DRAW_H / PET.cellH;
-  let pop = 1;
-  if (nowMs < emoteT) pop = 1 + 0.12 * ((emoteT - nowMs) / EMOTE_MS);
-  const dw = PET.cellW * scale * pop, dh = PET.cellH * scale * pop;
-  // The run rows already face left/right. Non-directional states (idle, jumping)
-  // mirror to the LAST horizontal facing so a stopped brush keeps facing that way.
-  const directional = state === 'running-right' || state === 'running-left';
-  const flipX = (!directional && face !== IDLE_BASE_FACE) ? -1 : 1;
-  // "Painting" wobble: rock the brush around its bristle/floor point so the
-  // bristles sweep side-to-side like real brushing (faster while moving).
-  const amp = speed > MOVE_EPS ? 0.16 : 0.06;
-  const wobble = Math.sin(nowMs / 80 + slot * 1.7) * amp;
+  const sx = frame * PET.cellW, sy = rowSt.row * PET.cellH;
+  const drawH = state === 'idle' ? PET_IDLE_DRAW_H : PET_DRAW_H;
+  const dw = PET.cellW * (drawH / PET.cellH);
+  const dh = drawH;
   ctx.save();
+  ctx.globalAlpha = frozen ? 0.92 : 1;
+  if (pose.directional) {
+    ctx.translate(x, y);
+    ctx.scale(pose.flipX, 1);
+    ctx.drawImage(ts, sx, sy, PET.cellW, PET.cellH, -dw / 2, -dh * PET_ANCHOR_Y, dw, dh);
+  } else {
+    ctx.drawImage(ts, sx, sy, PET.cellW, PET.cellH, x - dw / 2, y - dh * PET_ANCHOR_Y, dw, dh);
+  }
+  ctx.restore();
+}
+
+function drawPowerupSprite(type, rowName, x, y, size, alpha = 1) {
+  if (!powerupReady) return false;
+  const col = POWERUP_SHEET.cols[type] !== undefined ? POWERUP_SHEET.cols[type] : POWERUP_SHEET.cols.speed;
+  const row = POWERUP_SHEET.rows[rowName] !== undefined ? POWERUP_SHEET.rows[rowName] : POWERUP_SHEET.rows.active;
+  const sx = col * POWERUP_SHEET.cellW;
+  const sy = row * POWERUP_SHEET.cellH;
+  ctx.save();
+  ctx.globalAlpha = alpha;
   ctx.translate(x, y);
-  ctx.rotate(wobble);
-  ctx.scale(flipX, 1);
-  ctx.drawImage(ts, sx, sy, PET.cellW, PET.cellH, -dw / 2, -dh * PET_ANCHOR_Y, dw, dh);
+  ctx.drawImage(
+    powerupSheet,
+    sx, sy, POWERUP_SHEET.cellW, POWERUP_SHEET.cellH,
+    -size / 2, -size / 2, size, size,
+  );
   ctx.restore();
-
-  // Status overlays from rivals' powerups.
-  if (frozen) {
-    ctx.save();
-    ctx.globalAlpha = 0.42; ctx.fillStyle = '#bfefff';
-    ctx.beginPath(); ctx.ellipse(x, y - 14, 23, 27, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    drawSymbol('snow', x, y - 46, 9);
-  } else if (noPaint) {
-    ctx.save();
-    ctx.globalAlpha = 0.34; ctx.fillStyle = '#9aa0aa';
-    ctx.beginPath(); ctx.ellipse(x, y - 14, 21, 25, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    drawSymbol('noink', x, y - 46, 9);
-  }
-
-  // Pickup sparkles.
-  if (nowMs < emoteT) {
-    const k = (emoteT - nowMs) / EMOTE_MS;
-    ctx.save(); ctx.fillStyle = '#fff';
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2 + nowMs / 280;
-      const rr = 18 + (1 - k) * 18;
-      ctx.globalAlpha = k;
-      ctx.beginPath(); ctx.arc(x + Math.cos(a) * rr, y - 6 + Math.sin(a) * rr, 2.2, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
-  }
+  return true;
 }
 
-// Supercell-style powerup badges: bold rounded gem, gradient, thick outline, sheen.
-const POWERUP_STYLE = {
-  speed:   { a: '#ffe48a', b: '#ff9d2f', ring: '#6e3d00', sym: 'bolt' },
-  freeze:  { a: '#d6f3ff', b: '#37a8ff', ring: '#0f4a78', sym: 'snow' },
-  inkjam:  { a: '#ffc6e4', b: '#ff3da5', ring: '#7a1147', sym: 'noink' },
-  missile: { a: '#ffd0b0', b: '#ff5a3c', ring: '#7a2410', sym: 'missile' },
-};
-
-function roundRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-// Bold white symbol (dark edge) centered at (cx,cy), scale r.
-function drawSymbol(sym, cx, cy, r) {
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.fillStyle = '#fff';
-  if (sym === 'bolt') {
-    ctx.beginPath();
-    ctx.moveTo(r * 0.18, -r * 0.85); ctx.lineTo(-r * 0.5, r * 0.12); ctx.lineTo(-r * 0.04, r * 0.12);
-    ctx.lineTo(-r * 0.22, r * 0.85); ctx.lineTo(r * 0.55, -r * 0.18); ctx.lineTo(r * 0.04, -r * 0.18);
-    ctx.closePath(); ctx.lineWidth = 3; ctx.stroke(); ctx.fill();
-  } else if (sym === 'snow') {
-    ctx.lineWidth = 3.2;
-    for (let i = 0; i < 3; i++) {
-      ctx.save(); ctx.rotate(i * Math.PI / 3);
-      ctx.beginPath(); ctx.moveTo(0, -r * 0.95); ctx.lineTo(0, r * 0.95); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, -r * 0.55); ctx.lineTo(-r * 0.3, -r * 0.82);
-      ctx.moveTo(0, -r * 0.55); ctx.lineTo(r * 0.3, -r * 0.82); ctx.stroke();
-      ctx.restore();
-    }
-  } else if (sym === 'noink') {
-    ctx.beginPath();
-    ctx.moveTo(0, -r * 0.85);
-    ctx.quadraticCurveTo(r * 0.72, r * 0.2, 0, r * 0.72);
-    ctx.quadraticCurveTo(-r * 0.72, r * 0.2, 0, -r * 0.85);
-    ctx.closePath(); ctx.lineWidth = 2.4; ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = '#e23b3b'; ctx.lineWidth = 3.4;
-    ctx.beginPath(); ctx.moveTo(-r, -r); ctx.lineTo(r, r); ctx.stroke();
-  } else if (sym === 'missile') {
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();                       // rocket body + nose
-    ctx.moveTo(0, -r);
-    ctx.lineTo(r * 0.42, -r * 0.2);
-    ctx.lineTo(r * 0.42, r * 0.5);
-    ctx.lineTo(-r * 0.42, r * 0.5);
-    ctx.lineTo(-r * 0.42, -r * 0.2);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath();                       // fins
-    ctx.moveTo(r * 0.42, r * 0.15); ctx.lineTo(r * 0.78, r * 0.58); ctx.lineTo(r * 0.42, r * 0.5);
-    ctx.moveTo(-r * 0.42, r * 0.15); ctx.lineTo(-r * 0.78, r * 0.58); ctx.lineTo(-r * 0.42, r * 0.5);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#7ad0ff';             // window
-    ctx.beginPath(); ctx.arc(0, -r * 0.08, r * 0.2, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.restore();
+function drawPickupFade(fx) {
+  const age = (nowMs - fx.start) / POWERUP_FADE_MS;
+  if (age < 0 || age >= 1) return;
+  const alpha = Math.pow(1 - age, 1.35);
+  drawPowerupSprite(fx.type, 'active', fx.x, fx.y, 56, alpha);
 }
 
 function drawPowerup(pu) {
-  const st = POWERUP_STYLE[pu.type] || POWERUP_STYLE.speed;
+  if (!powerupReady) return;
   const bob = Math.sin(nowMs / 320 + pu.id * 1.3) * 3;
-  const x = pu.x, y = pu.y + bob, s = 18;
+  const x = pu.x, y = pu.y + bob;
   const pulse = 0.5 + 0.5 * Math.sin(nowMs / 260 + pu.id);
 
-  ctx.save();                              // outer glow
-  ctx.globalAlpha = 0.28 + 0.18 * pulse; ctx.fillStyle = st.b;
-  ctx.beginPath(); ctx.arc(x, y, s + 12, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-
-  ctx.save();                              // gem badge
-  const g = ctx.createLinearGradient(x, y - s, x, y + s);
-  g.addColorStop(0, st.a); g.addColorStop(1, st.b);
-  ctx.fillStyle = g; ctx.strokeStyle = st.ring; ctx.lineWidth = 3.5; ctx.lineJoin = 'round';
-  roundRect(x - s, y - s, 2 * s, 2 * s, 9); ctx.fill(); ctx.stroke();
-  ctx.globalAlpha = 0.4; ctx.fillStyle = '#fff';   // glossy sheen
-  roundRect(x - s + 4, y - s + 4, 2 * s - 8, s * 0.6, 6); ctx.fill();
-  ctx.restore();
-
-  drawSymbol(st.sym, x, y + 1, s * 0.62);
+  drawGroundShadow(x, y + 19, 24 + pulse * 2, 8, 0.36);
+  drawPowerupSprite(pu.type, 'active', x, y, 56 + pulse * 4);
 }
 
 function render() {
@@ -611,6 +605,10 @@ function render() {
   if (paintLayer) ctx.drawImage(paintLayer, 0, 0);  // 1:1, world-resolution
 
   for (const pu of powerups) drawPowerup(pu);
+  if (pickupFades.length) {
+    for (const fx of pickupFades) drawPickupFade(fx);
+    pickupFades = pickupFades.filter((fx) => nowMs - fx.start < POWERUP_FADE_MS);
+  }
 
   // Missile-impact shockwaves (expanding white ring) over the fresh craters.
   if (impacts.length) {
@@ -629,13 +627,13 @@ function render() {
   // Collect actors and depth-sort by y (lower draws on top).
   const actors = [];
   for (const r of remote.values()) {
-    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, speed: r.speed, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, emoteT: r.emoteUntil });
+    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint });
   }
   if (me.has && !spectating) {
-    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, speed: me.speed, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint, emoteT: me.emoteUntil });
+    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, dirAngle: me.dirAngle, speed: me.speed, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint });
   }
   actors.sort((a, b) => a.y - b.y);
-  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.emoteT);
+  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint);
 }
 
 // ---- HUD --------------------------------------------------------------------
