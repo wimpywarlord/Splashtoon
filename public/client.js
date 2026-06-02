@@ -5,44 +5,32 @@
 // interpolate others, send 8-direction input, draw animated sprites + powerups.
 // ---------------------------------------------------------------------------
 
-// Physics constants MUST mirror server.js for clean prediction.
-const MAX_SPEED = 230;
-const ACCEL = 2000;
-const BOOST_MULT = 1.8;
-const DAMPING_PER_SEC = 4.0;
-const BRUSH_R = 16;
-const MOVE_EPS = 14;          // speed (px/s) above which the brush plays its run cycle
-const DRIFT_EPS = 3.5;        // keep a deceleration/drift pose until motion is visually dead
-const FACE_EPS = 18;          // |vx| needed to flip left/right facing (hysteresis -> no flicker)
-const RECONCILE_SOFT_DIST = 28; // tolerate normal network delay without visible drag
-const RECONCILE_HARD_DIST = 140; // snap only when prediction is clearly wrong
-const RECONCILE_SOFT_GAIN = 0.035;
+const {
+  MAX_SPEED,
+  ACCEL,
+  BOOST_MULT,
+  DAMPING_PER_SEC,
+  BRUSH_R,
+  MOVE_EPS,
+  DRIFT_EPS,
+  FACE_EPS,
+  RECONCILE_SOFT_DIST,
+  RECONCILE_HARD_DIST,
+  RECONCILE_SOFT_GAIN,
+  PET,
+  PET_DRAW_H,
+  PET_IDLE_DRAW_H,
+  PET_DRIFT_DRAW_H,
+  PET_ANCHOR_Y,
+  TRAIL_W,
+  SNAPSHOT_STAMP_PX,
+  POWERUP_SHEET,
+  POWERUP_FADE_MS,
+} = window.Splashtoon.config;
 
 // Animated brush-spirit spritesheet: 8 cols x 9 rows, 192x208 cells. Rows are
 // game-specific brush/powerup interaction states. The pink paint is recolored
 // to each player's color at load.
-const PET = {
-  cellW: 192, cellH: 208,
-  states: {
-    'idle':             { row: 0, frames: 6, rate: 170 },
-    'running-right':    { row: 1, frames: 7, rate: 70 },
-    'running-left':     { row: 2, frames: 7, rate: 70 },
-    'speed':            { row: 3, frames: 4, rate: 190 },
-    'drift':            { row: 0, frames: 6, rate: 150 },
-    'freeze-cast':      { row: 4, frames: 6, rate: 90 },
-    'frozen-disabled':  { row: 5, frames: 6, rate: 120 },
-    'inkjam-cast':      { row: 6, frames: 7, rate: 90 },
-    'missile-cast':     { row: 7, frames: 6, rate: 75 },
-    'inkjam-disabled':  { row: 8, frames: 6, rate: 120 },
-    'inkjam-disabled-moving': { row: 6, frames: 7, rate: 110 },
-  },
-};
-const PET_DRAW_H = 78;         // on-screen cell height (px)
-const PET_IDLE_DRAW_H = 66;    // idle should sit smaller than action states
-const PET_DRIFT_DRAW_H = 69;   // coasting state between action and full idle
-const PET_ANCHOR_Y = 0.62;     // fraction of the cell aligned to the brush's floor point
-const TRAIL_W = 26;            // smooth paint-ribbon width (px)
-const SNAPSHOT_STAMP_PX = 16;  // smooth spectator snapshots without bloating like live strokes
 const petSheet = new Image();
 let petReady = false;
 petSheet.onload = () => { petReady = true; };
@@ -50,16 +38,8 @@ petSheet.src = '/assets/brush-spirit.png';
 const tintedSheets = {};       // slot -> recolored <canvas>
 let snapshotStamps = [];       // slot -> small rounded cell stamp for grid snapshots
 
-// Generated powerup spritesheet: 4 cols x 3 rows, 362x362 cells.
-// Runtime intentionally uses only the base active row; pickup feedback is a
+// Runtime intentionally uses only the base powerup row; pickup feedback is a
 // clean fade-out, not a burst/expansion animation.
-const POWERUP_SHEET = {
-  cellW: 362,
-  cellH: 362,
-  cols: { speed: 0, freeze: 1, inkjam: 2, missile: 3 },
-  rows: { active: 0 },
-};
-const POWERUP_FADE_MS = 850;
 const powerupSheet = new Image();
 let powerupReady = false;
 powerupSheet.onload = () => { powerupReady = true; };

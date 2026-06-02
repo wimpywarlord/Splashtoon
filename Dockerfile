@@ -7,6 +7,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY public ./public
+COPY src ./src
 COPY server.js ./server.js
 
 EXPOSE 3015

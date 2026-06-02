@@ -1,0 +1,101 @@
+'use strict';
+
+const PORT = process.env.PORT || 3015;
+
+const GRID_W = 120;
+const GRID_H = 75;
+const CELL = 10;
+const WORLD_W = GRID_W * CELL;
+const WORLD_H = GRID_H * CELL;
+const EMPTY = 255;
+
+const MAX_PLAYERS = 8;
+const TICK_HZ = 30;
+const TICK_MS = 1000 / TICK_HZ;
+
+const MAX_SPEED = 230;
+const ACCEL = 2000;
+const DAMPING_PER_SEC = 4.0;
+
+const BRUSH_R = 16;
+const STAMP_STEP = BRUSH_R / 2;
+const MIN_PAINT_MOVE2 = 0.4;
+
+const ROUND_MS = 120_000;
+const INTERMISSION_MS = 10_000;
+
+const POWERUP_EFFECT_MS = 4_000;
+const POWERUP_MAX = 2;
+const POWERUP_SPAWN_MS = 13_000;
+const POWERUP_TTL_MS = 6_000;
+const POWERUP_R = 18;
+const BOOST_MS = POWERUP_EFFECT_MS;
+const BOOST_MULT = 1.8;
+const FREEZE_MS = POWERUP_EFFECT_MS;
+const INKJAM_MS = POWERUP_EFFECT_MS;
+
+const MISSILE_COUNT = 12;
+const MISSILE_DELAY_MS = 200;
+const MISSILE_INTERVAL_MS = Math.floor((POWERUP_EFFECT_MS - MISSILE_DELAY_MS) / (MISSILE_COUNT - 1));
+const CRATER_R = 36;
+
+const POWERUP_TYPES = ['speed', 'freeze', 'inkjam', 'missile'];
+
+const PALETTE = [
+  '#ff4d6d',
+  '#4dd2ff',
+  '#ffd23f',
+  '#7c4dff',
+  '#3ddc84',
+  '#ff8c42',
+  '#ff6fd8',
+  '#5b8cff',
+];
+
+const SPAWNS = [
+  [WORLD_W * 0.15, WORLD_H * 0.2],
+  [WORLD_W * 0.85, WORLD_H * 0.8],
+  [WORLD_W * 0.85, WORLD_H * 0.2],
+  [WORLD_W * 0.15, WORLD_H * 0.8],
+  [WORLD_W * 0.5, WORLD_H * 0.15],
+  [WORLD_W * 0.5, WORLD_H * 0.85],
+  [WORLD_W * 0.15, WORLD_H * 0.5],
+  [WORLD_W * 0.85, WORLD_H * 0.5],
+];
+
+module.exports = {
+  PORT,
+  GRID_W,
+  GRID_H,
+  CELL,
+  WORLD_W,
+  WORLD_H,
+  EMPTY,
+  MAX_PLAYERS,
+  TICK_HZ,
+  TICK_MS,
+  MAX_SPEED,
+  ACCEL,
+  DAMPING_PER_SEC,
+  BRUSH_R,
+  STAMP_STEP,
+  MIN_PAINT_MOVE2,
+  ROUND_MS,
+  INTERMISSION_MS,
+  POWERUP_EFFECT_MS,
+  POWERUP_MAX,
+  POWERUP_SPAWN_MS,
+  POWERUP_TTL_MS,
+  POWERUP_R,
+  BOOST_MS,
+  BOOST_MULT,
+  FREEZE_MS,
+  INKJAM_MS,
+  MISSILE_COUNT,
+  MISSILE_DELAY_MS,
+  MISSILE_INTERVAL_MS,
+  CRATER_R,
+  POWERUP_TYPES,
+  PALETTE,
+  SPAWNS,
+};
