@@ -9,7 +9,7 @@ const WORLD_W = GRID_W * CELL;
 const WORLD_H = GRID_H * CELL;
 const EMPTY = 255;
 
-const MAX_PLAYERS = 8;
+const MAX_PLAYERS = 6;
 
 // Netcode: simulate physics fast for crisp motion/collisions, but only push a
 // state snapshot to clients at the lower broadcast rate (clients interpolate
@@ -72,26 +72,26 @@ const CRATER_R = 36;
 
 const POWERUP_TYPES = ['speed', 'freeze', 'inkjam', 'missile'];
 
+// One color per slot (MAX_PLAYERS). These six are the most mutually distinct of
+// the old set -- the dropped pink/blue read too close to red/purple at speed.
 const PALETTE = [
-  '#ff4d6d',
-  '#4dd2ff',
-  '#ffd23f',
-  '#7c4dff',
-  '#3ddc84',
-  '#ff8c42',
-  '#ff6fd8',
-  '#5b8cff',
+  '#ff4d6d',   // red
+  '#4dd2ff',   // cyan
+  '#ffd23f',   // yellow
+  '#7c4dff',   // purple
+  '#3ddc84',   // green
+  '#ff8c42',   // orange
 ];
 
+// One spawn per slot (MAX_PLAYERS): an evenly spread 3x2 grid (top/bottom rows,
+// left/center/right), ordered so consecutive slots start far apart.
 const SPAWNS = [
-  [WORLD_W * 0.15, WORLD_H * 0.2],
-  [WORLD_W * 0.85, WORLD_H * 0.8],
-  [WORLD_W * 0.85, WORLD_H * 0.2],
-  [WORLD_W * 0.15, WORLD_H * 0.8],
-  [WORLD_W * 0.5, WORLD_H * 0.15],
-  [WORLD_W * 0.5, WORLD_H * 0.85],
-  [WORLD_W * 0.15, WORLD_H * 0.5],
-  [WORLD_W * 0.85, WORLD_H * 0.5],
+  [WORLD_W * 0.15, WORLD_H * 0.2],    // top-left
+  [WORLD_W * 0.85, WORLD_H * 0.8],    // bottom-right
+  [WORLD_W * 0.85, WORLD_H * 0.2],    // top-right
+  [WORLD_W * 0.15, WORLD_H * 0.8],    // bottom-left
+  [WORLD_W * 0.5, WORLD_H * 0.15],    // top-center
+  [WORLD_W * 0.5, WORLD_H * 0.85],    // bottom-center
 ];
 
 module.exports = {

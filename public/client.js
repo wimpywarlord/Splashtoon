@@ -84,7 +84,7 @@ const G = {
 };
 // Default team colors so the local landing-page sim can render before the server
 // sends the real palette on connect (these mirror the server config).
-const DEFAULT_PALETTE = ['#ff4d6d', '#4dd2ff', '#ffd23f', '#7c4dff', '#3ddc84', '#ff8c42', '#ff6fd8', '#5b8cff'];
+const DEFAULT_PALETTE = ['#ff4d6d', '#4dd2ff', '#ffd23f', '#7c4dff', '#3ddc84', '#ff8c42'];   // 6 slots, mirrors server PALETTE
 let palette = [];
 let paletteRGB = [];
 
@@ -858,7 +858,7 @@ const bgSim = {
     if (!palette.length) { palette = DEFAULT_PALETTE.slice(); paletteRGB = palette.map(hexToRGB); }
     initPaintLayer();   // fresh, world-sized (cleared)
     this.agents = [];
-    const n = Math.min(8, palette.length);
+    const n = Math.min(6, palette.length);   // attract sim mirrors the 6-player game
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
       this.agents.push({
