@@ -32,6 +32,7 @@ const {
   WORLD_H,
   EMPTY,
   BRUSH_R,
+  MAX_SPEED,
   MAX_PLAYERS,
   BOT_NOTICE_R,
   COARSE_ZW,
@@ -141,6 +142,8 @@ function createBotAI() {
     thinkUntil: 0,
     puId: null,
     puReactAt: 0,
+    puChase: false,
+    puReCheckAt: 0,
   };
 }
 
@@ -166,6 +169,30 @@ function nearestPowerup(room, p, noticeR) {
     if (d < bestD) { bestD = d; best = pu; }
   }
   return best;
+}
+
+// Decide whether to commit to a powerup, the way a human sizes up the race:
+// always contest a tight race, usually bail when a rival is clearly closer or it
+// will expire first -- but sometimes chase anyway (optimism; greedier bots more).
+function worthChasing(p, pu, room, ai, t) {
+  const myD = Math.hypot(pu.x - p.x, pu.y - p.y);
+  let rivalD = Infinity;
+  for (const o of room.players.values()) {
+    if (o.slot < 0 || o === p) continue;
+    const d = Math.hypot(pu.x - o.x, pu.y - o.y);
+    if (d < rivalD) rivalD = d;
+  }
+  // Will it still be there if I sprint flat-out? (rough, a touch optimistic)
+  const timeLeft = (pu.expiresAt - t) / 1000;
+  if (Number.isFinite(timeLeft) && myD > timeLeft * MAX_SPEED * 0.85 * 1.1) {
+    return Math.random() < 0.12;            // basically unreachable -> rarely stubborn
+  }
+  // Tight race (ahead, or within ~a brush of the closest rival): always go.
+  if (myD <= rivalD + BRUSH_R * 3) return true;
+  // Clearly behind: usually give up, but sometimes chase anyway.
+  const behind = clamp((myD - rivalD) / 240, 0, 1);
+  const chaseProb = (0.55 + 0.25 * ai.greed) - 0.55 * behind;
+  return Math.random() < chaseProb;
 }
 
 // Choose a territory goal from the room's coarse opportunity grid. Enemy turf is
@@ -309,14 +336,25 @@ function updateBot(p, room, dt, t) {
 
   const band = rubberBand(room, p);
 
-  // 2. Powerup priority: a powerup in range is grabbed after the reaction delay.
+  // 2. Powerup priority: only bots with one in range even consider it, and only
+  // if they judge the race winnable (re-assessed periodically). Chasers grab it
+  // after their reaction delay; the rest carry on painting.
   let urgent = false;
   const pu = nearestPowerup(room, p, ai.noticeR);
   if (pu) {
-    if (ai.puId !== pu.id) { ai.puId = pu.id; ai.puReactAt = t + rand(ai.reactMs[0], ai.reactMs[1]); }
-    if (t >= ai.puReactAt) { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
+    if (ai.puId !== pu.id) {
+      ai.puId = pu.id;                                       // newly noticed
+      ai.puReactAt = t + rand(ai.reactMs[0], ai.reactMs[1]);
+      ai.puChase = worthChasing(p, pu, room, ai, t);
+      ai.puReCheckAt = t + 500;
+    } else if (ai.puChase && t >= ai.puReCheckAt) {
+      ai.puReCheckAt = t + 500;
+      ai.puChase = worthChasing(p, pu, room, ai, t);          // bail if it's now lost
+    }
+    if (ai.puChase && t >= ai.puReactAt) { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
   } else if (ai.puId !== null) {
     ai.puId = null;            // it was taken / expired -> resume territory now
+    ai.puChase = false;
     ai.retargetAt = 0;
   }
 
