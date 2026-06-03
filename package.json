@@ -1,5 +1,5 @@
 {
-  "name": "splashtoon",
+  "name": "battle-painters",
   "version": "1.0.0",
   "description": "Multiplayer paint .io game — most area painted in 120s wins.",
   "type": "commonjs",

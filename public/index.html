@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="description" content="Paint the most. Outlast the rest." />
-  <meta name="application-name" content="Splashtoon" />
+  <meta name="application-name" content="Battle Painters" />
   <meta name="theme-color" content="#0a0b10" />
-  <meta name="apple-mobile-web-app-title" content="Splashtoon" />
+  <meta name="apple-mobile-web-app-title" content="Battle Painters" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta property="og:title" content="Splashtoon" />
+  <meta property="og:title" content="Battle Painters" />
   <meta property="og:description" content="Paint the most. Outlast the rest." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="/assets/logo-brush-spirit.png" />
@@ -17,10 +17,10 @@
   <meta property="og:image:width" content="1024" />
   <meta property="og:image:height" content="1024" />
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="Splashtoon" />
+  <meta name="twitter:title" content="Battle Painters" />
   <meta name="twitter:description" content="Paint the most. Outlast the rest." />
   <meta name="twitter:image" content="/assets/logo-brush-spirit.png" />
-  <title>Splashtoon</title>
+  <title>Battle Painters</title>
   <link rel="icon" href="/favicon.ico?v=3" sizes="any" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=3" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=3" />
@@ -93,26 +93,23 @@
       </div>
     </div>
 
-    <!-- Start screen (slither-style: name + Play). Connection opens on Play. -->
-    <div id="start" class="overlay">
-      <div class="card start-card">
-        <div class="logo">Splash<span>toon</span></div>
-        <div class="tagline">Paint the most. Outlast the rest.</div>
-        <form id="start-form" class="start-form" autocomplete="off">
-          <label class="field">
-            <span class="field-label">Name</span>
-            <input id="name-input" class="input" type="text" maxlength="16" placeholder="Player" spellcheck="false" />
-          </label>
-          <button id="play-btn" class="btn btn-primary" type="submit">Play</button>
-        </form>
+    <!-- Landing-only bottom bar: brand + stats (left), name/Play + menu (right).
+         The client-side game runs clean, full-bleed behind it -- nothing is overlaid
+         on it. Shown via body.in-menu; hidden in a match. -->
+    <nav id="bottom-nav" aria-label="Menu">
+      <div class="nav-left">
+        <div class="logo">Battle <span>Painters</span></div>
         <div id="stats" class="stats"></div>
-        <div class="controls-hint">
-          Move with <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
-          or the arrow keys — you paint as you move.
-        </div>
-        <button id="sound-toggle" class="link-btn" type="button">Sound: On</button>
       </div>
-    </div>
+      <form id="start-form" class="start-form" autocomplete="off">
+        <input id="name-input" class="input" type="text" maxlength="16" placeholder="Enter name (optional)" spellcheck="false" aria-label="Player name" />
+        <button id="play-btn" class="btn btn-primary" type="submit">Play</button>
+      </form>
+      <div class="nav-actions">
+        <button id="nav-settings" class="nav-btn" type="button" aria-haspopup="true" aria-expanded="false">Settings</button>
+        <a class="nav-btn nav-link" href="https://x.com/type_kshitij" target="_blank" rel="noopener">@type_kshitij</a>
+      </div>
+    </nav>
 
   </div>
 

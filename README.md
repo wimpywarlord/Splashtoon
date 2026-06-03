@@ -1,4 +1,4 @@
-# Splashtoon
+# Battle Painters
 
 A browser multiplayer paint **.io** game. Brushes roam a shared canvas; whoever
 has painted the most area when the **90-second** timer runs out wins. No signup,

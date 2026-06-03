@@ -1,7 +1,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Splashtoon client: render the authoritative grid, predict own movement,
+// Battle Painters client: render the authoritative grid, predict own movement,
 // interpolate others, send 8-direction input, draw animated sprites + powerups.
 // ---------------------------------------------------------------------------
 
@@ -64,13 +64,12 @@ const els = {
   resultTitle: document.getElementById('result-title'),
   resultList: document.getElementById('result-list'),
   nextCountdown: document.getElementById('next-countdown'),
-  start: document.getElementById('start'),
   startForm: document.getElementById('start-form'),
   nameInput: document.getElementById('name-input'),
   stats: document.getElementById('stats'),
-  soundToggle: document.getElementById('sound-toggle'),
   resultsMenuBtn: document.getElementById('results-menu-btn'),
   settingsBtn: document.getElementById('settings-btn'),
+  navSettings: document.getElementById('nav-settings'),
   settingsMenu: document.getElementById('settings-menu'),
   soundToggleIngame: document.getElementById('sound-toggle-ingame'),
   volSlider: document.getElementById('vol-slider'),
@@ -86,9 +85,6 @@ const G = {
   w: 128, h: 72, cell: 10,        // 16:9 arena (matches the server); the local
   worldW: 1280, worldH: 720,      // attract-mode sim uses this before any connect
 };
-// Default team colors so the local landing-page sim can render before the server
-// sends the real palette on connect (these mirror the server config).
-const DEFAULT_PALETTE = ['#ff4d6d', '#4dd2ff', '#ffd23f', '#7c4dff', '#3ddc84', '#ff8c42'];   // 6 slots, mirrors server PALETTE
 let palette = [];
 let paletteRGB = [];
 
@@ -1022,27 +1018,23 @@ function render() {
   const barH = cam.barH || 0;
   const pvw = cam.cssW;
   const pvh = Math.max(1, cam.cssH - barH);   // everything below the top bar
-  // In-game: a 16:9 board that fills the full height under the bar (CONTAIN, so it
-  // can never exceed the width either). Every player sees the IDENTICAL whole arena
-  // regardless of window shape -- a level playing field. Menu bg: COVER (full bleed).
-  const z = inMenu
-    ? Math.max(pvw / G.worldW, pvh / G.worldH)
-    : Math.min(pvw / G.worldW, pvh / G.worldH);
+  // A 16:9 board that fills the full height under the bar (CONTAIN, so it can never
+  // exceed the width either). Every player sees the IDENTICAL whole arena regardless
+  // of window shape -- a level playing field.
+  const z = Math.min(pvw / G.worldW, pvh / G.worldH);
   cam.zoom = z;
   const bw = G.worldW * z, bh = G.worldH * z;   // board size on screen (css px)
   const ox = (pvw - bw) / 2;
   // Flush to the bar: the board fills the height below it (bar takes the remaining
   // height up top); brush tips lean over the bar. Any side slack is chrome.
-  const oy = inMenu ? (pvh - bh) / 2 : barH;
+  const oy = barH;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   // Chrome (darker than the board) fills the area under the bar so any side margin
   // reads as a framed surface rather than padding glued to the board.
-  if (!inMenu) {
-    ctx.fillStyle = CHROME_BG;
-    ctx.fillRect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
-  }
+  ctx.fillStyle = CHROME_BG;
+  ctx.fillRect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
 
   // Board content (paint, powerups, impacts) clipped to the board rect.
   ctx.save();
@@ -1054,85 +1046,20 @@ function render() {
   ctx.restore();
 
   // Subtle framed-panel edge around the board so the margins look intentional.
-  if (!inMenu) {
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-    ctx.shadowBlur = 20 * dpr;
-    ctx.shadowOffsetY = 5 * dpr;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-    ctx.lineWidth = Math.max(1, dpr);
-    ctx.strokeRect(ox * dpr + 0.5, oy * dpr + 0.5, bw * dpr - 1, bh * dpr - 1);
-    ctx.restore();
-  }
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 20 * dpr;
+  ctx.shadowOffsetY = 5 * dpr;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+  ctx.lineWidth = Math.max(1, dpr);
+  ctx.strokeRect(ox * dpr + 0.5, oy * dpr + 0.5, bw * dpr - 1, bh * dpr - 1);
+  ctx.restore();
 
   // Brushes UNCLIPPED on top -> their tips can poke up over the bar.
   ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
-  if (inMenu) bgSim.drawBrushes(); else drawActors();
+  drawActors();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
-
-// ---- Landing-page background: a purely LOCAL sim (no server) -----------------
-// A handful of wandering brushes painting trails, so the menu has a live game
-// behind it without any connection. Reuses the real paint layer + brush sprites.
-const bgSim = {
-  agents: [],
-  init() {
-    if (!palette.length) { palette = DEFAULT_PALETTE.slice(); paletteRGB = palette.map(hexToRGB); }
-    initPaintLayer();   // fresh, world-sized (cleared)
-    this.agents = [];
-    const n = Math.min(6, palette.length);   // attract sim mirrors the 6-player game
-    for (let i = 0; i < n; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      this.agents.push({
-        x: BRUSH_R + Math.random() * (G.worldW - 2 * BRUSH_R),
-        y: BRUSH_R + Math.random() * (G.worldH - 2 * BRUSH_R),
-        slot: i,
-        dirAngle: ang,
-        face: Math.cos(ang) < 0 ? -1 : 1,
-        baseSpeed: MAX_SPEED * (0.7 + Math.random() * 0.25),
-        speed: 0,
-        wanderPhase: Math.random() * Math.PI * 2,
-        wanderFreq: 0.5 + Math.random() * 0.8,
-        turnRate: 1.4 + Math.random() * 1.7,
-        lastPaintX: undefined,
-        lastPaintY: undefined,
-      });
-    }
-  },
-  update(dt) {
-    if (!this.agents.length) this.init();
-    const W = G.worldW, H = G.worldH;
-    const margin = BRUSH_R * 7;
-    for (const a of this.agents) {
-      a.wanderPhase += dt * a.wanderFreq;
-      a.dirAngle += Math.sin(a.wanderPhase) * a.turnRate * dt;
-      // Smoothly steer away from walls (blend an inward push into the heading)
-      // instead of hard-reflecting -- no jittery bouncing/scraping at the edges.
-      let ax = 0, ay = 0;
-      if (a.x < margin) ax += 1 - a.x / margin;
-      else if (a.x > W - margin) ax -= 1 - (W - a.x) / margin;
-      if (a.y < margin) ay += 1 - a.y / margin;
-      else if (a.y > H - margin) ay -= 1 - (H - a.y) / margin;
-      if (ax || ay) {
-        a.dirAngle = Math.atan2(Math.sin(a.dirAngle) + ay * 2.2, Math.cos(a.dirAngle) + ax * 2.2);
-      }
-      a.x += Math.cos(a.dirAngle) * a.baseSpeed * dt;
-      a.y += Math.sin(a.dirAngle) * a.baseSpeed * dt;
-      a.x = Math.max(BRUSH_R, Math.min(W - BRUSH_R, a.x));   // safety clamp
-      a.y = Math.max(BRUSH_R, Math.min(H - BRUSH_R, a.y));
-      const c = Math.cos(a.dirAngle);
-      if (c < -0.05) a.face = -1; else if (c > 0.05) a.face = 1;
-      a.speed = a.baseSpeed;
-      strokeSeg(a, a.slot, a.x, a.y);   // paint the trail onto the persistent layer
-    }
-  },
-  drawBrushes() {
-    const list = this.agents.slice().sort((p, q) => p.y - q.y);
-    for (const a of list) {
-      drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, false, false, false, false, null, true);
-    }
-  },
-};
 
 // ---- HUD --------------------------------------------------------------------
 function fmtTime(ms) {
@@ -1288,19 +1215,18 @@ function frame(t) {
   const dt = Math.min(0.05, gap / 1000);
   lastFrame = t;
   nowMs = t;
-  if (inMenu) {
-    bgSim.update(dt);   // local attract-mode sim (no server)
-  } else {
+  // The landing has no game now -- only run the game pipeline while in a match.
+  if (!inMenu) {
     if (gap > RESYNC_STALL_MS) requestResync();   // loop resumed after a stall -> catch up paint
     predict(dt);
     interpolateRemotes();
     paintTrails();      // accumulate smooth paint onto the persistent layer
-  }
-  render();
-  updateHUD();
-  if (GameAudio && !inMenu) {
-    const lvl = (me.has && !spectating && phase === 'active') ? me.speed / MAX_SPEED : 0;
-    GameAudio.movement(lvl);
+    render();
+    updateHUD();
+    if (GameAudio) {
+      const lvl = (me.has && !spectating && phase === 'active') ? me.speed / MAX_SPEED : 0;
+      GameAudio.movement(lvl);
+    }
   }
   requestAnimationFrame(frame);
 }
@@ -1362,7 +1288,6 @@ function syncSoundUI() {
   const vol = GameAudio ? GameAudio.getVolume() : a.volume;
   const musicVol = GameAudio ? GameAudio.getMusicVolume() : a.musicVol;
   const sfxVol = GameAudio ? GameAudio.getSfxVolume() : a.sfxVol;
-  if (els.soundToggle) els.soundToggle.textContent = `Sound: ${muted ? 'Off' : 'On'}`;
   if (els.soundToggleIngame) els.soundToggleIngame.textContent = muted ? 'Off' : 'On';
   if (els.volSlider) els.volSlider.value = String(Math.round(vol * 100));
   if (els.musicSlider) els.musicSlider.value = String(Math.round(musicVol * 100));
@@ -1412,8 +1337,17 @@ function setBarVisible(v) {
   resize();
 }
 
+// The landing-only bottom nav and the menu-anchored quick overlay are driven by a
+// single body class: `body.in-menu` shows the nav and re-anchors the settings panel
+// above it (see style.css). In-match the class is off, so neither shows on the menu.
+function setNavVisible(v) {
+  document.body.classList.toggle('in-menu', v);
+  if (!v && els.settingsMenu) els.settingsMenu.classList.add('hidden');
+}
+
 function initMenu() {
   inMenu = true;
+  myId = null;          // no "me" on the landing -> applyPlayers treats every brush as a remote
   if (Store && els.nameInput) {
     const saved = Store.getName();
     if (saved) els.nameInput.value = saved;
@@ -1421,10 +1355,9 @@ function initMenu() {
   renderStats();
   syncSoundUI();
   setBarVisible(false);
-  show(els.start);
+  setNavVisible(true);
   hide(els.spectate);
   hide(els.results);
-  bgSim.init();         // local attract-mode game behind the menu (NO connection)
   setTimeout(() => { if (els.nameInput) els.nameInput.focus(); }, 60);
 }
 
@@ -1434,22 +1367,22 @@ function startPlay() {
   inMenu = false;
   if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture
   setBarVisible(true);
-  hide(els.start);
+  setNavVisible(false);
   connect();            // open the connection only now
 }
 
 function leaveToMenu() {
-  disconnect();         // drop the match; the menu is a purely local sim again
+  disconnect();         // drop the match and return to the landing
   if (GameAudio) GameAudio.movement(0);
   initMenu();
 }
 
 if (els.startForm) els.startForm.addEventListener('submit', (e) => { e.preventDefault(); startPlay(); });
-if (els.soundToggle) els.soundToggle.addEventListener('click', toggleSound);
 if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', leaveToMenu);
 
 // Settings dropdown (gear at the bar's left edge).
 if (els.settingsBtn) els.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
+if (els.navSettings) els.navSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
 if (els.soundToggleIngame) els.soundToggleIngame.addEventListener('click', toggleSound);
 if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Number(els.volSlider.value)));
 if (els.musicSlider) els.musicSlider.addEventListener('input', () => setMusicVolume(Number(els.musicSlider.value)));

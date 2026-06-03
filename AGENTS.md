@@ -1,4 +1,4 @@
-# Splashtoon Agent Instructions
+# Battle Painters Agent Instructions
 
 These instructions apply to the whole repository.
 

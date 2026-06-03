@@ -295,6 +295,7 @@ html, body {
   flex: 1;
   display: flex;
   align-items: center;
+  align-self: stretch;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
@@ -305,14 +306,15 @@ html, body {
 
 .lb-item {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
-  padding: 3px 9px; font-size: 13px; line-height: 1; border-radius: 8px;
+  padding: 2px 9px 3px; font-size: 13px; line-height: 1.25; border-radius: 8px;
   transition: transform 0.45s ease;          /* FLIP slide when ranks shuffle */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
 }
 .lb-item.me { font-weight: 700; background: rgba(255, 255, 255, 0.08); }
 .lb-crown { width: 15px; height: 15px; object-fit: contain; flex: none; }
 .lb-rank { color: var(--st-muted-fg); font-size: 11px; font-weight: 700; min-width: 13px; text-align: center; }
-.lb-name { color: var(--st-fg); max-width: 88px; overflow: hidden; text-overflow: ellipsis; }
+.lb-name { color: var(--st-fg); max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-pct { color: var(--st-fg); font-weight: 700; }
 .lb-item .swatch { width: 11px; height: 11px; }
 
@@ -442,81 +444,90 @@ html, body {
 }
 .link-btn:hover { color: var(--st-fg); }
 
-/* ---- Start screen --------------------------------------------------------- */
-/* Light backdrop so the live bot game plays visibly behind the menu card. */
-#start {
+/* ---- Landing -------------------------------------------------------------- */
+/* No game runs on the landing now -- the canvas is hidden and all menu UI lives in a
+   single bottom bar over the page background (ready for landing content to be added). */
+body.in-menu #game { display: none; }
+
+/* Landing-only bottom bar (toggled by body.in-menu from setNavVisible): brand +
+   stats on the left, name/Play + menu on the right. A stronger bottom gradient since
+   it now carries the primary controls; wraps gracefully on narrow screens. */
+#bottom-nav {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
   z-index: 7;
-  background: rgba(8, 9, 13, 0.34);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 14px;
+  padding: 14px 18px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(8, 9, 13, 0.86) 0%, rgba(8, 9, 13, 0.55) 55%, rgba(8, 9, 13, 0) 100%);
+  pointer-events: none;          /* gaps pass through to the game; children re-enable */
 }
-.start-card {
-  width: min(380px, calc(100% - 36px));
-  padding: 32px 30px 22px;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
+body.in-menu #bottom-nav { display: flex; }
+#bottom-nav > * { pointer-events: auto; }
+.nav-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.nav-actions { display: flex; align-items: center; gap: 8px; }
+.nav-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  background: rgba(20, 22, 30, 0.58);
+  border: 1px solid var(--st-border);
+  color: var(--st-fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-decoration: none;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition: background 0.14s ease, border-color 0.14s ease;
 }
+.nav-btn:hover { background: rgba(40, 44, 56, 0.72); border-color: var(--st-border-strong); }
+
+/* Settings panel re-anchors above the nav on the landing (already a non-blocking
+   positioned panel, so it floats over the demo without dimming it). */
+body.in-menu #settings-menu { top: auto; bottom: 64px; right: 16px; left: auto; z-index: 8; }
+/* Compact brand wordmark, sitting in the bar. */
 .logo {
-  font-size: 46px;
+  font-size: 22px;
   font-weight: 800;
-  letter-spacing: -1px;
+  letter-spacing: -0.5px;
   line-height: 1;
+  white-space: nowrap;
   background: linear-gradient(180deg, #ffffff, #ffd9c9 70%, #ff8a5c);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  text-shadow: 0 6px 30px rgba(255, 106, 61, 0.25);
 }
 .logo span { color: var(--st-primary); -webkit-text-fill-color: var(--st-primary); }
-.tagline { color: var(--st-muted-fg); font-size: 14px; margin-top: 8px; margin-bottom: 22px; }
 
-.start-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 7px; text-align: left; }
-.field-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--st-muted-fg);
-}
-.start-form .btn-primary { padding: 12px; font-size: 16px; }
+/* Name + Play: the primary action, pushed to the right edge of the bar. */
+.start-form { display: flex; flex-direction: row; align-items: center; gap: 8px; margin-left: auto; }
+.start-form .input { width: min(220px, 42vw); padding: 9px 13px; text-align: left; }
+.start-form .btn-primary { padding: 9px 20px; font-size: 15px; }
 
-.stats {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin: 20px 0 4px;
-  flex-wrap: wrap;
-}
+/* Stats as badge pills, matching the nav buttons. */
+.stats { display: flex; align-items: center; gap: 8px; margin: 0; flex-wrap: wrap; }
 .stats:empty { display: none; }
-.stat {
-  flex: 1 1 0;
-  min-width: 64px;
-  background: rgba(0, 0, 0, 0.24);
+#bottom-nav .stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  background: rgba(20, 22, 30, 0.58);
   border: 1px solid var(--st-border);
   border-radius: 10px;
-  padding: 10px 6px;
+  padding: 8px 13px;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
-.stat-value { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--st-fg); }
-.stat-label { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--st-muted-fg); margin-top: 3px; }
-
-.controls-hint { color: var(--st-muted-fg); font-size: 12.5px; line-height: 1.6; margin-top: 18px; }
-.kbd {
-  display: inline-block;
-  min-width: 20px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--st-border-strong);
-  color: var(--st-fg);
-  border-radius: 5px;
-  padding: 1px 6px;
-  margin: 0 1px;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-#start .sound-toggle, #sound-toggle { margin-top: 16px; align-self: center; }
+.stat-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--st-fg); }
+.stat-label { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--st-muted-fg); }
 
 /* Results tweaks */
 #result-title.big { font-size: 34px; }

@@ -1,4 +1,4 @@
-# Splashtoon Claude Instructions
+# Battle Painters Claude Instructions
 
 Follow the repository rules in `AGENTS.md`. The same constraints apply when working through Claude.
 
