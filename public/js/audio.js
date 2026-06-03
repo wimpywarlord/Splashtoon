@@ -17,6 +17,7 @@
   let master = null;
   let musicGain = null;
   let sfxGain = null;
+  let brushGain = null;   // own bus so the movement loop has its own setting
   let noiseBuf = null;
 
   let muted = false;
@@ -24,11 +25,13 @@
   let musicOn = true;
   let musicVol = 1;     // music category level (0..1), scales MUSIC_MIX
   let sfxVol = 1;       // SFX category level (0..1), scales SFX_MIX
+  let brushVol = 1;     // brush whoosh level (0..1), scales BRUSH_MIX
 
   // Per-category mix levels. The user's category volume (0..1) multiplies these,
   // so a category at 1.0 sounds exactly as it did before category controls.
   const MUSIC_MIX = 0.32;
   const SFX_MIX = 0.9;
+  const BRUSH_MIX = 0.9;  // matches SFX_MIX so the default whoosh level is unchanged
 
   function clamp01(v) { return Math.max(0, Math.min(1, v || 0)); }
 
@@ -76,6 +79,10 @@
     sfxGain = ctx.createGain();
     sfxGain.gain.value = SFX_MIX * sfxVol;
     sfxGain.connect(master);
+
+    brushGain = ctx.createGain();
+    brushGain.gain.value = BRUSH_MIX * brushVol;
+    brushGain.connect(master);
 
     noiseBuf = makeNoiseBuffer();
     startWhoosh();
@@ -292,7 +299,7 @@
     whooshGain.gain.value = 0;
     src.connect(filt);
     filt.connect(whooshGain);
-    whooshGain.connect(sfxGain);
+    whooshGain.connect(brushGain);
     src.start();
   }
   // level: 0..1 (typically speed / maxSpeed). Smoothed internally.
@@ -386,6 +393,9 @@
   function applySfxVol() {
     if (sfxGain && ctx) sfxGain.gain.setTargetAtTime(SFX_MIX * sfxVol, now(), 0.02);
   }
+  function applyBrushVol() {
+    if (brushGain && ctx) brushGain.gain.setTargetAtTime(BRUSH_MIX * brushVol, now(), 0.02);
+  }
   function setMuted(m) { muted = !!m; applyMaster(); }
   function isMuted() { return muted; }
   function setVolume(v) { volume = clamp01(v); applyMaster(); }
@@ -394,6 +404,8 @@
   function getMusicVolume() { return musicVol; }
   function setSfxVolume(v) { sfxVol = clamp01(v); applySfxVol(); }
   function getSfxVolume() { return sfxVol; }
+  function setBrushVolume(v) { brushVol = clamp01(v); applyBrushVol(); }
+  function getBrushVolume() { return brushVol; }
   function setMusicEnabled(on) { musicOn = !!on; }
   function setCountdownEnabled(on) { countdownEnabled = !!on; }
   function isCountdownEnabled() { return countdownEnabled; }
@@ -402,10 +414,13 @@
   try {
     if (global.SplashtoonStore) {
       const a = global.SplashtoonStore.getAudio();
-      muted = !!a.muted;
+      // Stored `muted` is intentionally ignored: the Sound On/Off toggle is gone
+      // (Master at 0 is the mute), so a legacy muted=true must not strand the
+      // user in silence with no control to undo it.
       volume = typeof a.volume === 'number' ? a.volume : volume;
       musicVol = typeof a.musicVol === 'number' ? a.musicVol : musicVol;
       sfxVol = typeof a.sfxVol === 'number' ? a.sfxVol : sfxVol;
+      brushVol = typeof a.brushVol === 'number' ? a.brushVol : brushVol;
       countdownEnabled = a.countdown !== false;   // default on
     }
   } catch (_) { /* ignore */ }
@@ -420,5 +435,6 @@
     countdown, setCountdownEnabled, isCountdownEnabled,
     setMuted, isMuted, setVolume, getVolume, setMusicEnabled,
     setMusicVolume, getMusicVolume, setSfxVolume, getSfxVolume,
+    setBrushVolume, getBrushVolume,
   };
 })(window);

@@ -88,10 +88,10 @@ const els = {
   settingsMenu: document.getElementById('settings-menu'),
   countdown: document.getElementById('countdown'),
   countdownToggle: document.getElementById('countdown-toggle'),
-  soundToggleIngame: document.getElementById('sound-toggle-ingame'),
   volSlider: document.getElementById('vol-slider'),
   musicSlider: document.getElementById('music-slider'),
   sfxSlider: document.getElementById('sfx-slider'),
+  brushSlider: document.getElementById('brush-slider'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -1595,23 +1595,16 @@ function renderStats(opts = {}) {
 }
 
 function syncSoundUI() {
-  const a = Store ? Store.getAudio() : { muted: false, volume: 0.7, musicVol: 1, sfxVol: 1 };
-  const muted = GameAudio ? GameAudio.isMuted() : a.muted;
+  const a = Store ? Store.getAudio() : { muted: false, volume: 0.7, musicVol: 1, sfxVol: 1, brushVol: 1 };
   const vol = GameAudio ? GameAudio.getVolume() : a.volume;
   const musicVol = GameAudio ? GameAudio.getMusicVolume() : a.musicVol;
   const sfxVol = GameAudio ? GameAudio.getSfxVolume() : a.sfxVol;
-  if (els.soundToggleIngame) els.soundToggleIngame.textContent = muted ? 'Off' : 'On';
+  const brushVol = GameAudio ? GameAudio.getBrushVolume() : a.brushVol;
   if (els.countdownToggle) els.countdownToggle.textContent = (GameAudio ? GameAudio.isCountdownEnabled() : a.countdown !== false) ? 'On' : 'Off';
   if (els.volSlider) els.volSlider.value = String(Math.round(vol * 100));
   if (els.musicSlider) els.musicSlider.value = String(Math.round(musicVol * 100));
   if (els.sfxSlider) els.sfxSlider.value = String(Math.round(sfxVol * 100));
-}
-
-function toggleSound() {
-  const muted = GameAudio ? !GameAudio.isMuted() : true;
-  if (GameAudio) { GameAudio.unlock(); GameAudio.setMuted(muted); }
-  if (Store) Store.setAudio({ muted });
-  syncSoundUI();
+  if (els.brushSlider) els.brushSlider.value = String(Math.round(brushVol * 100));
 }
 
 function toggleCountdown() {
@@ -1639,6 +1632,13 @@ function setSfxVolume(pct) {
   const v = Math.max(0, Math.min(1, pct / 100));
   if (GameAudio) { GameAudio.unlock(); GameAudio.setSfxVolume(v); }
   if (Store) Store.setAudio({ sfxVol: v });
+  syncSoundUI();
+}
+
+function setBrushVolume(pct) {
+  const v = Math.max(0, Math.min(1, pct / 100));
+  if (GameAudio) { GameAudio.unlock(); GameAudio.setBrushVolume(v); }
+  if (Store) Store.setAudio({ brushVol: v });
   syncSoundUI();
 }
 
@@ -1710,11 +1710,11 @@ if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', leaveToMenu
 // Settings dropdown (gear at the bar's left edge).
 if (els.settingsBtn) els.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
 if (els.navSettings) els.navSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
-if (els.soundToggleIngame) els.soundToggleIngame.addEventListener('click', toggleSound);
 if (els.countdownToggle) els.countdownToggle.addEventListener('click', toggleCountdown);
 if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Number(els.volSlider.value)));
 if (els.musicSlider) els.musicSlider.addEventListener('input', () => setMusicVolume(Number(els.musicSlider.value)));
 if (els.sfxSlider) els.sfxSlider.addEventListener('input', () => setSfxVolume(Number(els.sfxSlider.value)));
+if (els.brushSlider) els.brushSlider.addEventListener('input', () => setBrushVolume(Number(els.brushSlider.value)));
 if (els.settingsMenu) els.settingsMenu.addEventListener('click', (e) => e.stopPropagation());
 document.addEventListener('click', () => toggleSettings(false));   // click outside closes it
 

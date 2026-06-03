@@ -62,10 +62,6 @@
     <div id="settings-menu" class="hidden">
       <div class="settings-title">Settings</div>
       <div class="settings-row">
-        <span>Sound</span>
-        <button id="sound-toggle-ingame" class="settings-btn-sm" type="button">On</button>
-      </div>
-      <div class="settings-row">
         <span>Countdown</span>
         <button id="countdown-toggle" class="settings-btn-sm" type="button">On</button>
       </div>
@@ -80,6 +76,10 @@
       <label class="settings-row">
         <span>Effects</span>
         <input id="sfx-slider" type="range" min="0" max="100" value="100" />
+      </label>
+      <label class="settings-row">
+        <span>Brush</span>
+        <input id="brush-slider" type="range" min="0" max="100" value="100" />
       </label>
     </div>
 
@@ -117,7 +117,7 @@
              wherever it should live (renderStats() targets #stats; .stats styles are portable). -->
       </div>
       <form id="start-form" class="start-form" autocomplete="off">
-        <input id="name-input" class="input" type="text" maxlength="16" placeholder="Enter name (optional)" spellcheck="false" aria-label="Player name" />
+        <input id="name-input" class="input" type="text" maxlength="16" placeholder="Enter Nickname" spellcheck="false" aria-label="Player name" />
         <button id="play-btn" class="btn btn-primary play-btn" type="submit">
           <svg class="nav-icon nav-icon-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5.2v13.6L18.6 12 8 5.2z"></path></svg>
           <span>Play</span>
