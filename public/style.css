@@ -218,6 +218,7 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .result-row .score-name { text-align: left; }
+.result-row .score-pct { font-weight: 400; }
 
 #hint {
   position: absolute;

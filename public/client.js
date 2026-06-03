@@ -10,6 +10,7 @@ const {
   ACCEL,
   BOOST_MULT,
   SLOW_MULT,
+  TINY_SPEED_MULT,
   DAMPING_PER_SEC,
   BRUSH_R,
   MOVE_EPS,
@@ -586,6 +587,7 @@ function predict(dt) {
   let speedMult = 1;
   if (me.boost) speedMult *= BOOST_MULT;
   if (me.slow) speedMult *= SLOW_MULT;
+  if (me.paintScale < 1) speedMult *= TINY_SPEED_MULT;
   const accel = ACCEL * speedMult;
   const maxSpeed = MAX_SPEED * speedMult;
   if (mx || my) {

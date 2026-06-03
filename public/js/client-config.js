@@ -4,8 +4,9 @@
   global.Splashtoon.config = {
     MAX_SPEED: 230,
     ACCEL: 2000,
-    BOOST_MULT: 1.8,
+    BOOST_MULT: 2.0,
     SLOW_MULT: 0.45,
+    TINY_SPEED_MULT: 1.25,
     DAMPING_PER_SEC: 4.0,
     BRUSH_R: 16,
     MOVE_EPS: 14,

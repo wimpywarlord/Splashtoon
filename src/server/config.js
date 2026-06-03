@@ -54,31 +54,34 @@ const POWERUP_MAX = 2;
 const POWERUP_SPAWN_MS = 13_000;
 const POWERUP_TTL_MS = 6_000;
 const POWERUP_R = 28;
-// Powerups spawn at a uniformly RANDOM point -- NOT biased toward open ground,
-// which a player could game by drifting away from the pack to farm the "far from
-// everyone" pickups. Truly random by default (CLEAR_R = 0). Raising CLEAR_R rejects
-// spots within that radius of a player (avoids a freebie spawned at someone's feet)
-// but reintroduces a slight bias AWAY from clustered players, so keep it small or 0.
-// TRIES caps the rejection-sampling attempts.
+// Powerups spawn at a RANDOM spot that's genuinely contestable: at least a couple
+// of players within POWERUP_SPAWN_CONTEST_R can race for it, but none inside
+// POWERUP_SPAWN_CLEAR_R (no freebie dropped at someone's feet). This inverts the old
+// "furthest from everyone" bias -- you can't farm pickups by drifting off alone,
+// since your empty area has no contesters and won't be chosen; spawns follow the
+// scrum. Falls back to any feet-clear spot if nobody's grouped up. TRIES caps the
+// sampling attempts.
 const POWERUP_SPAWN_TRIES = 56;
-const POWERUP_SPAWN_CLEAR_R = 0;
+const POWERUP_SPAWN_CLEAR_R = 160;
+const POWERUP_SPAWN_CONTEST_R = 380;
 const BOOST_MS = POWERUP_EFFECT_MS;
-const BOOST_MULT = 1.8;
-const SLOW_MS = POWERUP_EFFECT_MS;
+const BOOST_MULT = 2.0;
+const SLOW_MS = 4_000;
 const SLOW_MULT = 0.45;
-const FREEZE_MS = POWERUP_EFFECT_MS;
-const INKJAM_MS = POWERUP_EFFECT_MS;
+const FREEZE_MS = 3_500;
+const INKJAM_MS = 3_500;
 const MEGA_BRUSH_MS = POWERUP_EFFECT_MS;
 const MEGA_BRUSH_MULT = 1.55;
-const TINY_BRUSH_MS = POWERUP_EFFECT_MS;
+const TINY_BRUSH_MS = 5_000;
 const TINY_BRUSH_MULT = 0.55;
-const ERASE_MS = 3_000;
-const ECHO_MS = 8_000;
-const SELF_FREEZE_MS = 2_500;
+const TINY_SPEED_MULT = 1.25;
+const ERASE_MS = 5_000;
+const ECHO_MS = 7_000;
+const SELF_FREEZE_MS = 3_000;
 const SELF_INKJAM_MS = 3_000;
 
 const MISSILE_COUNT = 12;
-const BAD_MISSILE_COUNT = 8;
+const BAD_MISSILE_COUNT = 12;
 const MISSILE_DELAY_MS = 200;
 const MISSILE_INTERVAL_MS = Math.floor((POWERUP_EFFECT_MS - MISSILE_DELAY_MS) / (MISSILE_COUNT - 1));
 const CRATER_R = 36;
@@ -181,6 +184,7 @@ module.exports = {
   POWERUP_R,
   POWERUP_SPAWN_TRIES,
   POWERUP_SPAWN_CLEAR_R,
+  POWERUP_SPAWN_CONTEST_R,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,
@@ -191,6 +195,7 @@ module.exports = {
   MEGA_BRUSH_MULT,
   TINY_BRUSH_MS,
   TINY_BRUSH_MULT,
+  TINY_SPEED_MULT,
   ERASE_MS,
   ECHO_MS,
   SELF_FREEZE_MS,

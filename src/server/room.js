@@ -36,6 +36,7 @@ const {
   POWERUP_R,
   POWERUP_SPAWN_TRIES,
   POWERUP_SPAWN_CLEAR_R,
+  POWERUP_SPAWN_CONTEST_R,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,
@@ -46,6 +47,7 @@ const {
   MEGA_BRUSH_MULT,
   TINY_BRUSH_MS,
   TINY_BRUSH_MULT,
+  TINY_SPEED_MULT,
   ERASE_MS,
   ECHO_MS,
   SELF_FREEZE_MS,
@@ -442,6 +444,7 @@ class Room {
     let speedMult = 1;
     if (t < p.boostUntil) speedMult *= BOOST_MULT;
     if (t < p.slowUntil) speedMult *= SLOW_MULT;
+    if (t < p.brushScaleUntil && p.brushScale < 1) speedMult *= TINY_SPEED_MULT;
     const accel = ACCEL * speedMult;
     const maxSpeed = MAX_SPEED * speedMult;
 
@@ -500,25 +503,32 @@ class Room {
   spawnPowerup() {
     const t = now();
     const margin = 90;
-    // Uniformly RANDOM spawn -- not biased toward open ground (which a player could
-    // game by drifting away from the pack to farm "far from everyone" pickups). We
-    // only reject spots within POWERUP_SPAWN_CLEAR_R of a player so nobody gets a
-    // freebie spawned at their feet; beyond that it's pure chance, fair regardless
-    // of position.
+    // Pick a RANDOM spot a few players can fairly race for -- >=2 within contest
+    // range and none at point-blank (no freebie). This inverts the old "furthest
+    // from everyone" bias: isolating yourself no longer farms pickups (your empty
+    // area has no contesters, so it isn't chosen) -- spawns follow the scrum. Falls
+    // back to any feet-clear spot if nobody's grouped up.
     const actives = [];
     for (const p of this.players.values()) if (p.slot >= 0) actives.push(p);
-    const clearR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
-    let px = 0, py = 0;
+    const feetR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
+    const contestR2 = POWERUP_SPAWN_CONTEST_R * POWERUP_SPAWN_CONTEST_R;
+    let px = 0, py = 0, lcx = 0, lcy = 0, lsx = 0, lsy = 0, hasClear = false, found = false;
     for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
-      px = margin + Math.random() * (WORLD_W - 2 * margin);
-      py = margin + Math.random() * (WORLD_H - 2 * margin);
-      let clear = true;
+      const x = margin + Math.random() * (WORLD_W - 2 * margin);
+      const y = margin + Math.random() * (WORLD_H - 2 * margin);
+      lsx = x; lsy = y;
+      let nearest2 = Infinity, contesters = 0;
       for (const p of actives) {
-        const dx = p.x - px, dy = p.y - py;
-        if (dx * dx + dy * dy < clearR2) { clear = false; break; }
+        const dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
+        if (d2 < nearest2) nearest2 = d2;
+        if (d2 < contestR2) contesters++;
       }
-      if (clear) break;   // accept first spot clear of everyone (else keep last sampled)
+      if (nearest2 >= feetR2) {
+        lcx = x; lcy = y; hasClear = true;                 // feet-clear (fallback)
+        if (contesters >= 2) { px = x; py = y; found = true; break; }   // random + contestable
+      }
     }
+    if (!found) { px = hasClear ? lcx : lsx; py = hasClear ? lcy : lsy; }
     const changes = pickPowerupSwitchCount();
     const type = pickWeightedPowerupType();
     this.powerups.push({
@@ -641,7 +651,7 @@ class Room {
       p.slowUntil = t + SLOW_MS;
     } else if (type === 'freeze') {
       p.castType = type;
-      p.castUntil = t + POWERUP_EFFECT_MS;
+      p.castUntil = t + FREEZE_MS;
       for (const o of this.players.values()) {
         if (o.slot < 0 || o.slot === p.slot) continue;
         o.frozenUntil = t + FREEZE_MS;
