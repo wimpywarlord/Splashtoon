@@ -66,13 +66,11 @@ const els = {
   muteBtn: document.getElementById('mute-btn'),
   soundToggle: document.getElementById('sound-toggle'),
   resultsMenuBtn: document.getElementById('results-menu-btn'),
+  minimap: document.getElementById('minimap'),
 };
 
 const GameAudio = window.SplashtoonAudio;
 const Store = window.SplashtoonStore;
-
-const stage = document.getElementById('stage');
-const stageFrame = document.getElementById('stage-frame');
 
 // ---- World / game state -----------------------------------------------------
 const G = {
@@ -109,6 +107,14 @@ let nowMs = 0;
 // Paint layer at grid resolution (1px per cell), scaled up on draw.
 let paintLayer = null;
 let paintCtx = null;
+
+// Layout: the canvas fills the viewport and the fixed 16:9 arena is drawn as an
+// elevated, rounded, white-bordered "platform" inset within it (board* rect, in
+// CSS px). The matte around it is the canvas background; brushes are drawn on top
+// UNCLIPPED so they lean over the platform edge instead of being cut. zoom maps
+// world px -> CSS px on the board.
+const ARENA_VOID = '#0a0b10';
+const cam = { boardX: 0, boardY: 0, boardW: 1280, boardH: 720, zoom: 1, dpr: 1, cssW: 1280, cssH: 720 };
 
 // ---- WebSocket --------------------------------------------------------------
 let ws = null;
@@ -738,20 +744,54 @@ function drawPowerup(pu) {
   drawPowerupSprite(pu.type, 'active', x, y, 56);
 }
 
+function roundRectPath(c, x, y, w, h, r) {
+  if (c.roundRect) { c.beginPath(); c.roundRect(x, y, w, h, r); return; }
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
 function render() {
-  ctx.clearRect(0, 0, G.worldW, G.worldH);
+  const dpr = cam.dpr, zoom = cam.zoom;
+  const dx = Math.round(cam.boardX * dpr), dy = Math.round(cam.boardY * dpr);
+  const dw = Math.round(cam.boardW * dpr), dh = Math.round(cam.boardH * dpr);
+  const R = 16 * dpr;
+  // world -> device transform for content drawn on the board
+  const worldTf = () => ctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, dx, dy);
+
+  // Matte (table) behind the platform.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = ARENA_VOID;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Elevated-platform drop shadow (bottom-weighted) under the board.
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+  ctx.shadowBlur = 40 * dpr;
+  ctx.shadowOffsetY = 18 * dpr;
+  ctx.fillStyle = '#000';
+  roundRectPath(ctx, dx, dy, dw, dh, R);
+  ctx.fill();
+  ctx.restore();
+
+  // Board surface, clipped to the rounded rect: bg + paint + powerups + impacts.
+  ctx.save();
+  roundRectPath(ctx, dx, dy, dw, dh, R);
+  ctx.clip();
+  worldTf();
   ctx.fillStyle = ARENA_BG;
   ctx.fillRect(0, 0, G.worldW, G.worldH);
-
-  if (paintLayer) ctx.drawImage(paintLayer, 0, 0);  // 1:1, world-resolution
-
+  if (paintLayer) ctx.drawImage(paintLayer, 0, 0);
   for (const pu of powerups) drawPowerup(pu);
   if (pickupFades.length) {
     for (const fx of pickupFades) drawPickupFade(fx);
     pickupFades = pickupFades.filter((fx) => nowMs - fx.start < POWERUP_FADE_MS);
   }
-
-  // Meteor-impact shockwaves (expanding white ring) over the fresh splatter.
   if (impacts.length) {
     for (const im of impacts) {
       const age = (nowMs - im.start) / 450;
@@ -764,8 +804,17 @@ function render() {
     }
     impacts = impacts.filter((im) => nowMs - im.start < 450);
   }
+  ctx.restore();   // drop clip + restore transform
 
-  // Collect actors and depth-sort by y (lower draws on top).
+  // Solid white border tracing the platform edge.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.lineWidth = 3 * dpr;
+  ctx.strokeStyle = '#ffffff';
+  roundRectPath(ctx, dx, dy, dw, dh, R);
+  ctx.stroke();
+
+  // Brushes on TOP and UNCLIPPED: they lean over the platform edge, never cut.
+  worldTf();
   const actors = [];
   for (const r of remote.values()) {
     actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, inputActive: r.inputActive, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, castType: r.castType });
@@ -775,6 +824,39 @@ function render() {
   }
   actors.sort((a, b) => a.y - b.y);
   for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.castType, a.inputActive);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawMinimap();
+}
+
+// Bird's-eye overview: whole arena scaled down with paint + player dots, on a
+// translucent panel so it stays light over the board.
+function drawMiniDot(g, x, y, color, sx, sy, r, ring) {
+  g.beginPath();
+  g.arc(x * sx, y * sy, r, 0, Math.PI * 2);
+  g.fillStyle = color || '#fff';
+  g.fill();
+  if (ring) { g.lineWidth = Math.max(1, r * 0.5); g.strokeStyle = '#fff'; g.stroke(); }
+}
+
+function drawMinimap() {
+  const mm = els.minimap;
+  if (!mm) return;
+  const g = mm._ctx || (mm._ctx = mm.getContext('2d'));
+  const MW = mm.width, MH = mm.height;
+  if (!MW || !MH) return;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, MW, MH);
+  g.fillStyle = 'rgba(8, 9, 13, 0.34)';   // as transparent as stays readable
+  g.fillRect(0, 0, MW, MH);
+
+  const sx = MW / G.worldW, sy = MH / G.worldH;
+  if (paintLayer) { g.imageSmoothingEnabled = true; g.globalAlpha = 0.95; g.drawImage(paintLayer, 0, 0, MW, MH); g.globalAlpha = 1; }
+
+  const otherR = Math.max(1.5, MW * 0.013);
+  const meR = Math.max(2.5, MW * 0.02);
+  for (const r of remote.values()) drawMiniDot(g, r.rx, r.ry, palette[r.slot], sx, sy, otherR, false);
+  if (me.has && !spectating) drawMiniDot(g, me.x, me.y, palette[mySlot], sx, sy, meR, true);
 }
 
 // ---- HUD --------------------------------------------------------------------
@@ -886,57 +968,54 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 
-// ---- Layout (letterbox) -----------------------------------------------------
+// ---- Layout (full-viewport canvas; 16:9 platform inset within it) ------------
 function resize() {
-  // Preserve aspect ratio (never squish); fit the board in the viewport, centered.
-  // Shrinking the window scales the whole board down uniformly.
-  const aspect = G.worldW / G.worldH;
-  const stageBox = boxExtras(stage);
-  const frameBox = boxExtras(stageFrame);
-  const vw = Math.max(320, window.innerWidth - stageBox.x - frameBox.x);
-  const vh = Math.max(240, window.innerHeight - stageBox.y - frameBox.y);
-  let dw = vw, dh = vw / aspect;
-  if (dh > vh) { dh = vh; dw = vh * aspect; }
-  dw = Math.floor(dw); dh = Math.floor(dh);
-  canvas.style.width = `${dw}px`;
-  canvas.style.height = `${dh}px`;
-  // Render at the physical pixel resolution so sprites stay crisp on retina /
-  // large windows instead of being upscaled from a fixed 1200x750 buffer.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(dw * dpr);
-  canvas.height = Math.round(dh * dpr);
-  ctx.setTransform(canvas.width / G.worldW, 0, 0, canvas.height / G.worldH, 0, 0);
+  const iw = window.innerWidth, ih = window.innerHeight;
+  // The board is inset by a matte big enough to (a) keep window/handle edges off
+  // the board and (b) give brushes room to lean past the platform edge without
+  // being clipped at the viewport boundary.
+  const pad = Math.min(96, Math.max(40, Math.round(Math.min(iw, ih) * 0.06)));
+  const availW = Math.max(160, iw - 2 * pad);
+  const availH = Math.max(90, ih - 2 * pad);
+  const aspect = G.worldW / G.worldH;
+  let bw = availW, bh = bw / aspect;
+  if (bh > availH) { bh = availH; bw = bh * aspect; }
+  bw = Math.floor(bw); bh = Math.floor(bh);
+
+  cam.boardW = bw;
+  cam.boardH = bh;
+  cam.boardX = Math.floor((iw - bw) / 2);
+  cam.boardY = Math.floor((ih - bh) / 2);
+  cam.zoom = bw / G.worldW;     // board is 16:9, world is 16:9 -> uniform scale
+  cam.dpr = dpr;
+  cam.cssW = iw;
+  cam.cssH = ih;
+
+  canvas.style.width = `${iw}px`;
+  canvas.style.height = `${ih}px`;
+  canvas.width = Math.round(iw * dpr);
+  canvas.height = Math.round(ih * dpr);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  // Anchor the HUD to the board rect so the timer/leaderboard hug the canvas.
-  requestAnimationFrame(() => {
-    const r = canvas.getBoundingClientRect();
-    els.hud.style.left = `${r.left}px`;
-    els.hud.style.top = `${r.top}px`;
-    els.hud.style.width = `${r.width}px`;
-    els.hud.style.height = `${r.height}px`;
-  });
+
+  // HUD hugs the board (timer/leaderboard/minimap sit at the platform corners).
+  els.hud.style.left = `${cam.boardX}px`;
+  els.hud.style.top = `${cam.boardY}px`;
+  els.hud.style.width = `${bw}px`;
+  els.hud.style.height = `${bh}px`;
+
+  // Size the minimap backing store for crisp DPR rendering.
+  if (els.minimap) {
+    const mw = els.minimap.clientWidth || 190;
+    const mh = els.minimap.clientHeight || Math.round(mw * G.worldH / G.worldW);
+    els.minimap.width = Math.round(mw * dpr);
+    els.minimap.height = Math.round(mh * dpr);
+  }
 }
 window.addEventListener('resize', resize);
 
 // ---- Utils ------------------------------------------------------------------
-function cssPx(style, prop) {
-  return parseFloat(style.getPropertyValue(prop)) || 0;
-}
-
-function boxExtras(el) {
-  if (!el) return { x: 0, y: 0 };
-  const s = getComputedStyle(el);
-  return {
-    x: cssPx(s, 'padding-left') + cssPx(s, 'padding-right') +
-      cssPx(s, 'border-left-width') + cssPx(s, 'border-right-width') +
-      cssPx(s, 'margin-left') + cssPx(s, 'margin-right'),
-    y: cssPx(s, 'padding-top') + cssPx(s, 'padding-bottom') +
-      cssPx(s, 'border-top-width') + cssPx(s, 'border-bottom-width') +
-      cssPx(s, 'margin-top') + cssPx(s, 'margin-bottom'),
-  };
-}
-
 function hexToRGB(hex) {
   const h = hex.replace('#', '');
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];

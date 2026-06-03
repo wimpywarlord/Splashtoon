@@ -2,8 +2,8 @@
 
 const PORT = process.env.PORT || 3015;
 
-const GRID_W = 120;
-const GRID_H = 75;
+const GRID_W = 128;   // 16:9 arena -> 1280 x 720 world
+const GRID_H = 72;
 const CELL = 10;
 const WORLD_W = GRID_W * CELL;
 const WORLD_H = GRID_H * CELL;

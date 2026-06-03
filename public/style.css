@@ -27,18 +27,16 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: clamp(18px, 3.4vw, 58px);
-  background:
-    linear-gradient(180deg, #070911 0%, #0d0b12 48%, #140b0d 100%);
+  padding: 0;
+  background: #0a0b10;
   isolation: isolate;
 }
 
+/* Full-bleed: the canvas now covers the whole viewport, so the old arcade frame
+   and its decorative layers are retired. */
 #stage::before,
 #stage::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
+  display: none;
 }
 
 #stage::before {
@@ -57,42 +55,28 @@ html, body {
     inset 0 -34px 88px rgba(224, 71, 34, 0.16);
 }
 
+/* The board, its white border and drop shadow are now drawn inside the canvas
+   (so brushes can lean past the edge). The wrapper is just a passthrough. */
 #stage-frame {
   position: relative;
   z-index: 1;
-  padding: clamp(9px, 1.2vw, 14px);
-  border-radius: 24px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 38%),
-    linear-gradient(135deg, #343a54 0%, #151827 46%, #3a1f24 100%);
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.07),
-    0 0 0 7px var(--stage-metal-dark),
-    0 0 0 10px rgba(255, 116, 55, 0.42),
-    0 32px 90px rgba(0, 0, 0, 0.68);
+  padding: 0;
+  line-height: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
-#stage-frame::before {
-  content: "";
-  position: absolute;
-  inset: clamp(9px, 1.2vw, 14px);
-  z-index: 2;
-  border-radius: 14px;
-  pointer-events: none;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    inset 0 0 0 3px rgba(0, 0, 0, 0.18);
-}
+#stage-frame::before { display: none; }
 
 #game {
   position: relative;
   z-index: 1;
   display: block;
-  background: #14171f;
-  border-radius: 14px;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-    inset 0 18px 40px rgba(255, 255, 255, 0.018);
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* HUD overlays are positioned over the canvas bounding box via JS. */
@@ -297,14 +281,15 @@ html, body {
   right: 14px;
   gap: 7px;
   padding: 12px 13px;
-  background: var(--st-card);
-  border: 1px solid var(--st-border);
+  background: rgba(12, 13, 18, 0.4);          /* mostly transparent; blur keeps it legible */
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--st-radius);
-  box-shadow: var(--st-shadow);
-  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   min-width: 184px;
 }
-.score-row { font-size: 13.5px; letter-spacing: 0.2px; }
+.score-row { font-size: 13.5px; letter-spacing: 0.2px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85); }
 .score-name { color: var(--st-muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 116px; }
 .score-row.me .score-name { color: var(--st-fg); }
 .score-pct { color: var(--st-fg); }
@@ -392,6 +377,21 @@ html, body {
 }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.06); }
 .icon-btn[aria-pressed="true"] { opacity: 0.55; }
+
+/* Minimap: bird's-eye overview, bottom-right */
+#minimap {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: clamp(130px, 15vw, 200px);
+  aspect-ratio: 16 / 9;
+  height: auto;
+  background: transparent;            /* the canvas paints its own translucent bg */
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
 
 .link-btn {
   appearance: none;
