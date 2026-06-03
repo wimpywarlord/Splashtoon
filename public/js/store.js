@@ -23,7 +23,7 @@
   }
 
   const DEFAULT_STATS = { bestCoverage: 0, wins: 0, matches: 0, winStreak: 0, bestStreak: 0 };
-  const DEFAULT_AUDIO = { muted: false, volume: 0.7 };
+  const DEFAULT_AUDIO = { muted: false, volume: 0.7, musicVol: 1, sfxVol: 1 };
 
   function getName() {
     try { return localStorage.getItem(KEY_NAME) || ''; } catch (_) { return ''; }

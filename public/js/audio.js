@@ -20,8 +20,17 @@
   let noiseBuf = null;
 
   let muted = false;
-  let volume = 0.7;
+  let volume = 0.7;     // master (0..1)
   let musicOn = true;
+  let musicVol = 1;     // music category level (0..1), scales MUSIC_MIX
+  let sfxVol = 1;       // SFX category level (0..1), scales SFX_MIX
+
+  // Per-category mix levels. The user's category volume (0..1) multiplies these,
+  // so a category at 1.0 sounds exactly as it did before category controls.
+  const MUSIC_MIX = 0.32;
+  const SFX_MIX = 0.9;
+
+  function clamp01(v) { return Math.max(0, Math.min(1, v || 0)); }
 
   let voices = 0;
   const MAX_VOICES = 18;
@@ -57,11 +66,11 @@
     master.connect(ctx.destination);
 
     musicGain = ctx.createGain();
-    musicGain.gain.value = 0.32;
+    musicGain.gain.value = MUSIC_MIX * musicVol;
     musicGain.connect(master);
 
     sfxGain = ctx.createGain();
-    sfxGain.gain.value = 0.9;
+    sfxGain.gain.value = SFX_MIX * sfxVol;
     sfxGain.connect(master);
 
     noiseBuf = makeNoiseBuffer();
@@ -126,11 +135,14 @@
     src.start(t0, off, dur + 0.05);
   }
 
+  // Music bus level after the user's category volume. duck() ramps back to this.
+  function musicBase() { return MUSIC_MIX * musicVol; }
+
   // Briefly duck the music (sidechain feel) under a big event.
   function duck(amount, hold) {
     if (!ctx || !musicGain) return;
     const t = now();
-    const base = 0.32;
+    const base = musicBase();
     musicGain.gain.cancelScheduledValues(t);
     musicGain.gain.setValueAtTime(musicGain.gain.value, t);
     musicGain.gain.linearRampToValueAtTime(base * (1 - amount), t + 0.03);
@@ -295,10 +307,20 @@
   function applyMaster() {
     if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : volume, now(), 0.02);
   }
+  function applyMusicVol() {
+    if (musicGain && ctx) musicGain.gain.setTargetAtTime(musicBase(), now(), 0.02);
+  }
+  function applySfxVol() {
+    if (sfxGain && ctx) sfxGain.gain.setTargetAtTime(SFX_MIX * sfxVol, now(), 0.02);
+  }
   function setMuted(m) { muted = !!m; applyMaster(); }
   function isMuted() { return muted; }
-  function setVolume(v) { volume = Math.max(0, Math.min(1, v)); applyMaster(); }
+  function setVolume(v) { volume = clamp01(v); applyMaster(); }
   function getVolume() { return volume; }
+  function setMusicVolume(v) { musicVol = clamp01(v); applyMusicVol(); }
+  function getMusicVolume() { return musicVol; }
+  function setSfxVolume(v) { sfxVol = clamp01(v); applySfxVol(); }
+  function getSfxVolume() { return sfxVol; }
   function setMusicEnabled(on) { musicOn = !!on; }
 
   // Initialize prefs from store if present.
@@ -307,6 +329,8 @@
       const a = global.SplashtoonStore.getAudio();
       muted = !!a.muted;
       volume = typeof a.volume === 'number' ? a.volume : volume;
+      musicVol = typeof a.musicVol === 'number' ? a.musicVol : musicVol;
+      sfxVol = typeof a.sfxVol === 'number' ? a.sfxVol : sfxVol;
     }
   } catch (_) { /* ignore */ }
 
@@ -318,5 +342,6 @@
   global.SplashtoonAudio = {
     unlock, pickup, impact, tick, roundEnd, spawn, movement, duck,
     setMuted, isMuted, setVolume, getVolume, setMusicEnabled,
+    setMusicVolume, getMusicVolume, setSfxVolume, getSfxVolume,
   };
 })(window);
