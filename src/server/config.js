@@ -28,10 +28,12 @@ const MAX_ROOMS = 50;
 const ROOM_EMPTY_GRACE_MS = 30_000;
 
 // Bot AI tuning.
-// A powerup within BOT_NOTICE_R of a bot becomes its top priority (grabbed after
-// only the bot's reaction delay). COARSE_* is the resolution of the per-room
-// "opportunity grid" bots use to steer toward open / contestable territory.
-const BOT_NOTICE_R = 340;
+// Bots consider any powerup within BOT_NOTICE_R (kept large -- ~the whole arena --
+// because powerups spawn far from the pack; the race/expiry assessment in
+// worthChasing then decides who actually commits, so a far but uncontested
+// powerup still gets chased while contested ones go to the closest). COARSE_* is
+// the resolution of the per-room "opportunity grid" bots steer territory by.
+const BOT_NOTICE_R = 1400;
 const COARSE_ZW = 12;
 const COARSE_ZH = 8;
 const BOT_COARSE_MS = 400;   // how often a room rebuilds its opportunity grid

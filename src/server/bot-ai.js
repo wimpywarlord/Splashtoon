@@ -144,6 +144,8 @@ function createBotAI() {
     puReactAt: 0,
     puChase: false,
     puReCheckAt: 0,
+    inkSeen: 0,        // noPaintUntil of the inkjam we last reacted to
+    inkIdle: false,    // this bot decided to wait out the current inkjam
   };
 }
 
@@ -333,6 +335,13 @@ function updateBot(p, room, dt, t) {
 
   // 1. Hesitation: coast (zero input -> damping eases to a stop).
   if (t < ai.thinkUntil) { p.mx = 0; p.my = 0; return; }
+
+  // Ink-jammed: a few bots just shrug and wait it out -- no point moving when you
+  // can't paint anyway (decided once per jam; most bots keep repositioning).
+  if (t < p.noPaintUntil) {
+    if (ai.inkSeen !== p.noPaintUntil) { ai.inkSeen = p.noPaintUntil; ai.inkIdle = Math.random() < 0.18; }
+    if (ai.inkIdle) { p.mx = 0; p.my = 0; return; }
+  }
 
   const band = rubberBand(room, p);
 
