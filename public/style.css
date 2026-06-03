@@ -101,9 +101,11 @@ html, body {
 }
 #timer .timer-val { position: relative; z-index: 2; color: #f4f6ff; text-shadow: 0 0 6px var(--eb-light), 0 1px 5px rgba(0, 0, 0, 0.75); }
 
-/* Urgency: purple under 30s, red under 10s; glow rises. */
+/* Urgency stages: orange (60-30s) -> purple (30-10s) -> red (10-0s); glow rises. */
+#timer.notice { --eb: #ff9430; --eb-light: #ffd6a6; --eb-glow: 0.78; }
 #timer.warn   { --eb: #b15cff; --eb-light: #e3ccff; --eb-glow: 0.9; }
 #timer.danger { --eb: #ff3b3b; --eb-light: #ffb3b3; --eb-glow: 1; }
+#timer.notice .timer-val { color: #ffe0bd; }
 #timer.warn .timer-val   { color: #f0e0ff; }
 #timer.danger .timer-val { color: #ffd0d0; }
 
@@ -280,7 +282,7 @@ html, body {
   position: relative;       /* block element in the document flow */
   z-index: 3;               /* under the canvas overlay (4); brush tips draw over it */
   width: 100%;
-  height: 40px;
+  min-height: 40px;         /* JS grows it to bottom-align the canvas on tall windows */
   display: flex;
   align-items: center;
   gap: 8px;

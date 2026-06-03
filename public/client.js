@@ -923,11 +923,12 @@ function fmtTime(ms) {
 function updateHUD() {
   if (els.timerVal) els.timerVal.textContent = fmtTime(timeLeftMs);
 
-  // Electric timer states: yellow <30s, red <10s, and the breathing speeds up as
-  // it approaches 0 (--eb-speed shrinks from ~2.2s down to ~0.45s).
+  // Electric timer stages: orange (60-30s) -> purple (30-10s) -> red (10-0s).
+  // Breathing kicks in at the purple stage and speeds up toward 0 (--eb-speed).
   const secs = Math.ceil(timeLeftMs / 1000);
   const active = phase === 'active';
-  els.timer.classList.toggle('warn', active && secs <= 30 && secs > 10);
+  els.timer.classList.toggle('notice', active && secs <= 60 && secs > 30);
+  els.timer.classList.toggle('warn',   active && secs <= 30 && secs > 10);
   els.timer.classList.toggle('danger', active && secs <= 10);
   if (active && secs <= 30) {
     const t01 = Math.max(0, Math.min(1, secs / 30));          // 1 at 30s -> 0 at 0s
@@ -1083,7 +1084,21 @@ function resize() {
   cam.dpr = dpr;
   cam.cssW = vw;
   cam.cssH = vh;
-  cam.barH = els.topbar ? els.topbar.offsetHeight : 0;   // 0 when hidden on the menu
+
+  const barVisible = els.topbar && els.topbar.style.display !== 'none';
+  if (barVisible) {
+    // Fit a 16:9 board under a MINIMUM bar, then grow the bar to swallow any
+    // leftover vertical space so the board sits flush to the BOTTOM (no gap under
+    // it) and fills the width. On a 16:9-ish window the bar stays at MIN_BAR.
+    const MIN_BAR = 40;
+    const fitZ = Math.min(vw / G.worldW, (vh - MIN_BAR) / G.worldH);
+    const boardH = G.worldH * fitZ;
+    const barH = Math.max(MIN_BAR, Math.round(vh - boardH));
+    els.topbar.style.height = `${barH}px`;
+    cam.barH = barH;
+  } else {
+    cam.barH = 0;   // hidden on the menu (canvas fills the whole screen)
+  }
 
   canvas.style.width = `${vw}px`;
   canvas.style.height = `${vh}px`;
@@ -1153,6 +1168,7 @@ function setVolume(pct) {
 function toggleSettings(force) {
   if (!els.settingsMenu || !els.settingsBtn) return;
   const open = force != null ? force : els.settingsMenu.classList.contains('hidden');
+  if (open) els.settingsMenu.style.top = `${(cam.barH || 40) + 4}px`;   // drop below the bar
   els.settingsMenu.classList.toggle('hidden', !open);
   els.settingsBtn.setAttribute('aria-expanded', String(open));
 }
