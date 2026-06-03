@@ -52,8 +52,8 @@ ctx.imageSmoothingEnabled = true;   // smooth sprite + paint scaling (was pixela
 
 const els = {
   timer: document.getElementById('timer'),
+  timerVal: document.querySelector('#timer .timer-val'),
   topbar: document.getElementById('topbar'),
-  stageFrame: document.getElementById('stage-frame'),
   rankLeft: document.getElementById('rank-left'),
   rankRight: document.getElementById('rank-right'),
   spectate: document.getElementById('spectate'),
@@ -791,20 +791,35 @@ function drawActors() {
 
 function render() {
   const dpr = cam.dpr;
-  // Borderless + full-screen: the arena COVERS the whole viewport. Same path for
-  // the menu (local sim) and in-game (server) -- only the brush source differs.
-  const z = Math.max(cam.cssW / G.worldW, cam.cssH / G.worldH);
+  const barH = cam.barH || 0;
+  const pvw = cam.cssW;                 // play region = viewport minus the bar
+  const pvh = Math.max(1, cam.cssH - barH);
+  // In-game: CONTAIN so the whole arena (and your brush) is always on screen, no
+  // matter the window/sidebar shape. Menu background: COVER for a full-bleed look.
+  const z = inMenu
+    ? Math.max(pvw / G.worldW, pvh / G.worldH)
+    : Math.min(pvw / G.worldW, pvh / G.worldH);
   cam.zoom = z;
-  const ox = (cam.cssW - G.worldW * z) / 2;
-  const oy = (cam.cssH - G.worldH * z) / 2;
+  const ox = (pvw - G.worldW * z) / 2;
+  const oy = barH + (pvh - G.worldH * z) / 2;
 
+  // Clear everything; the bar strip stays transparent so the DOM bar shows through.
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = ARENA_BG;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
 
+  // Board content (paint, powerups, impacts) clipped to the play region.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
+  ctx.clip();
   ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
   drawBoardContent();
+  ctx.restore();
+
+  // Brushes UNCLIPPED on top -> their tips can poke up over the bar.
+  ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
   if (inMenu) bgSim.drawBrushes(); else drawActors();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
@@ -881,15 +896,24 @@ function fmtTime(ms) {
 }
 
 function updateHUD() {
-  els.timer.textContent = fmtTime(timeLeftMs);
-  els.timer.classList.toggle('urgent', phase === 'active' && timeLeftMs <= 10000);
+  if (els.timerVal) els.timerVal.textContent = fmtTime(timeLeftMs);
+
+  // Electric timer states: yellow <30s, red <10s, and the breathing speeds up as
+  // it approaches 0 (--eb-speed shrinks from ~2.2s down to ~0.45s).
+  const secs = Math.ceil(timeLeftMs / 1000);
+  const active = phase === 'active';
+  els.timer.classList.toggle('warn', active && secs <= 30 && secs > 10);
+  els.timer.classList.toggle('danger', active && secs <= 10);
+  if (active && secs <= 30) {
+    const t01 = Math.max(0, Math.min(1, secs / 30));          // 1 at 30s -> 0 at 0s
+    els.timer.style.setProperty('--eb-speed', (0.45 + 1.75 * t01).toFixed(2) + 's');
+  }
 
   // One-shot countdown ticks in the final 10 seconds (driven by the displayed
   // clock so they're smooth between the 30Hz state updates).
-  const secs = Math.ceil(timeLeftMs / 1000);
-  if (!inMenu && phase === 'active' && secs >= 1 && secs <= 10) {
+  if (!inMenu && active && secs >= 1 && secs <= 10) {
     if (secs !== lastTickSecond) { lastTickSecond = secs; if (GameAudio) GameAudio.tick(secs); }
-  } else if (phase !== 'active') {
+  } else if (!active) {
     lastTickSecond = -1;
   }
 
@@ -1027,22 +1051,19 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 
-// ---- Layout: canvas fills the playfield (viewport minus the bar) -------------
+// ---- Layout: full-viewport canvas overlay; play area rendered below the bar ---
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  // The playfield is the flex:1 region under the bar; size the canvas to exactly
-  // that, so the bar + canvas fill the viewport with no overflow.
-  const cw = Math.max(160, (els.stageFrame ? els.stageFrame.clientWidth : window.innerWidth));
-  const ch = Math.max(120, (els.stageFrame ? els.stageFrame.clientHeight : window.innerHeight));
+  const vw = window.innerWidth, vh = window.innerHeight;
   cam.dpr = dpr;
-  cam.cssW = cw;
-  cam.cssH = ch;
-  cam.zoom = Math.max(cw / G.worldW, ch / G.worldH);   // cover the playfield
+  cam.cssW = vw;
+  cam.cssH = vh;
+  cam.barH = els.topbar ? els.topbar.offsetHeight : 0;   // 0 when hidden on the menu
 
-  canvas.style.width = `${cw}px`;
-  canvas.style.height = `${ch}px`;
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
+  canvas.style.width = `${vw}px`;
+  canvas.style.height = `${vh}px`;
+  canvas.width = Math.round(vw * dpr);
+  canvas.height = Math.round(vh * dpr);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 }

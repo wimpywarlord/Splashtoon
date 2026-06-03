@@ -8,63 +8,23 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <!-- Document-flow column: ranking bar on top, canvas fills the rest below it. -->
   <div id="stage">
 
-    <!-- Block-level ranking bar: settings (left), ranks split around the timer -->
+    <!-- Ranking bar: block element in flow; settings (left), ranks split around timer -->
     <div id="topbar">
       <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
       </button>
       <div id="rank-left" class="rank-group"></div>
-      <div id="timer">2:00</div>
+      <div id="timer"><span class="eb-border"></span><span class="eb-glow"></span><span class="timer-val">2:00</span></div>
       <div id="rank-right" class="rank-group"></div>
       <span class="topbar-spacer"></span>
     </div>
 
-    <!-- Playfield: the canvas + game overlays, filling the height below the bar -->
-    <div id="stage-frame">
-      <canvas id="game" width="1280" height="720"></canvas>
-
-      <!-- Spectator banner -->
-      <div id="spectate" class="overlay hidden">
-        <div class="card">
-          <div class="big">SPECTATING</div>
-          <div class="sub">Joining next round…</div>
-        </div>
-      </div>
-
-      <!-- Round-over results -->
-      <div id="results" class="overlay hidden">
-        <div class="card">
-          <div id="result-title" class="big">ROUND OVER</div>
-          <div id="result-list"></div>
-          <div class="sub">Next round in <span id="next-countdown">10</span>s</div>
-          <button id="results-menu-btn" class="btn btn-ghost" type="button">Leave to menu</button>
-        </div>
-      </div>
-
-      <!-- Start screen (slither-style: name + Play). Connection opens on Play. -->
-      <div id="start" class="overlay">
-        <div class="card start-card">
-          <div class="logo">Splash<span>toon</span></div>
-          <div class="tagline">Paint the most. Outlast the rest.</div>
-          <form id="start-form" class="start-form" autocomplete="off">
-            <label class="field">
-              <span class="field-label">Name</span>
-              <input id="name-input" class="input" type="text" maxlength="16" placeholder="Player" spellcheck="false" />
-            </label>
-            <button id="play-btn" class="btn btn-primary" type="submit">Play</button>
-          </form>
-          <div id="stats" class="stats"></div>
-          <div class="controls-hint">
-            Move with <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
-            or the arrow keys — you paint as you move.
-          </div>
-          <button id="sound-toggle" class="link-btn" type="button">Sound: On</button>
-        </div>
-      </div>
-    </div>
+    <!-- Full-viewport canvas overlay: play area is rendered below the bar, but
+         brush sprites are drawn unclipped so their tips can poke over the bar.
+         pointer-events:none so the bar/settings underneath stay clickable. -->
+    <canvas id="game" width="1280" height="720"></canvas>
 
     <!-- Settings dropdown (anchored under the gear; expandable over time) -->
     <div id="settings-menu" class="hidden">
@@ -79,7 +39,66 @@
       </label>
     </div>
 
+    <!-- Spectator banner -->
+    <div id="spectate" class="overlay hidden">
+      <div class="card">
+        <div class="big">SPECTATING</div>
+        <div class="sub">Joining next round…</div>
+      </div>
+    </div>
+
+    <!-- Round-over results -->
+    <div id="results" class="overlay hidden">
+      <div class="card">
+        <div id="result-title" class="big">ROUND OVER</div>
+        <div id="result-list"></div>
+        <div class="sub">Next round in <span id="next-countdown">10</span>s</div>
+        <button id="results-menu-btn" class="btn btn-ghost" type="button">Leave to menu</button>
+      </div>
+    </div>
+
+    <!-- Start screen (slither-style: name + Play). Connection opens on Play. -->
+    <div id="start" class="overlay">
+      <div class="card start-card">
+        <div class="logo">Splash<span>toon</span></div>
+        <div class="tagline">Paint the most. Outlast the rest.</div>
+        <form id="start-form" class="start-form" autocomplete="off">
+          <label class="field">
+            <span class="field-label">Name</span>
+            <input id="name-input" class="input" type="text" maxlength="16" placeholder="Player" spellcheck="false" />
+          </label>
+          <button id="play-btn" class="btn btn-primary" type="submit">Play</button>
+        </form>
+        <div id="stats" class="stats"></div>
+        <div class="controls-hint">
+          Move with <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
+          or the arrow keys — you paint as you move.
+        </div>
+        <button id="sound-toggle" class="link-btn" type="button">Sound: On</button>
+      </div>
+    </div>
+
   </div>
+
+  <!-- Animated turbulence filter for the timer's electric border -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <filter id="eb-displace" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">
+        <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="10" result="n1" seed="1" />
+        <feOffset in="n1" result="o1"><animate attributeName="dy" values="120; 0" dur="6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="10" result="n2" seed="1" />
+        <feOffset in="n2" result="o2"><animate attributeName="dy" values="0; -120" dur="6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="10" result="n3" seed="2" />
+        <feOffset in="n3" result="o3"><animate attributeName="dx" values="120; 0" dur="6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="10" result="n4" seed="2" />
+        <feOffset in="n4" result="o4"><animate attributeName="dx" values="0; -120" dur="6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feComposite in="o1" in2="o2" result="p1" />
+        <feComposite in="o3" in2="o4" result="p2" />
+        <feBlend in="p1" in2="p2" mode="color-dodge" result="comb" />
+        <feDisplacementMap in="SourceGraphic" in2="comb" scale="14" xChannelSelector="R" yChannelSelector="B" />
+      </filter>
+    </defs>
+  </svg>
 
   <script src="/js/client-config.js"></script>
   <script src="/js/store.js"></script>

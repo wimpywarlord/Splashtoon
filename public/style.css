@@ -20,13 +20,11 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Document-flow column: ranking bar on top, canvas fills the rest below it. */
+/* Bar is a block in flow at the top; the canvas overlays the whole viewport so
+   brush tips can poke up over the bar. */
 #stage {
   position: fixed;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 0;
   background: #0a0b10;
   isolation: isolate;
   overflow: hidden;
@@ -55,40 +53,57 @@ html, body {
     inset 0 -34px 88px rgba(224, 71, 34, 0.16);
 }
 
-/* Playfield: fills the height left under the bar; the canvas + overlays live here. */
-#stage-frame {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  line-height: 0;
-  overflow: hidden;
-}
-
-#stage-frame::before { display: none; }
-
+/* Canvas overlays the whole viewport (above the bar). Its play area is rendered
+   below the bar; brush sprites are drawn unclipped so tips lean over the bar.
+   pointer-events:none keeps the bar/settings underneath clickable. */
 #game {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
   display: block;
   background: transparent;
+  pointer-events: none;
 }
 
-/* Timer: a flex child centered in the top bar (see #topbar). */
+/* Timer: a centered chip in the top bar with an animated "electric" border that
+   colors + breathes as time runs out (yellow <30s, red <10s; JS sets --eb-speed
+   so the breathing intensifies toward 0). */
 #timer {
-  position: static;
+  position: relative;
   flex: none;
   font-size: 19px;
   font-weight: 700;
   letter-spacing: 1px;
-  padding: 3px 14px;
-  color: var(--st-fg, #f4f6fb);
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  padding: 4px 16px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.5);
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  --eb: rgba(255, 255, 255, 0.5);   /* electric color (calm by default) */
+  --eb-speed: 2.4s;                  /* breathing period (shortened by JS near 0) */
+  isolation: isolate;
 }
-#timer.urgent { color: #ff5a6e; animation: pulse 1s infinite; }
-@keyframes pulse { 50% { opacity: 0.55; } }
+#timer .timer-val { position: relative; z-index: 2; color: var(--st-fg); text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7); }
+#timer .eb-border {
+  position: absolute; inset: 0; z-index: 1; border-radius: 9px;
+  border: 1.5px solid var(--eb);
+  filter: url(#eb-displace);
+  pointer-events: none;
+}
+#timer .eb-glow {
+  position: absolute; inset: -2px; z-index: 0; border-radius: 11px;
+  border: 2px solid var(--eb);
+  filter: blur(5px);
+  opacity: 0;
+  pointer-events: none;
+}
+#timer.warn { --eb: #ffd23f; }
+#timer.danger { --eb: #ff4747; }
+#timer.warn .timer-val { color: #ffe487; }
+#timer.danger .timer-val { color: #ff8d8d; }
+#timer.warn, #timer.danger { animation: timer-breathe var(--eb-speed) ease-in-out infinite; }
+#timer.warn .eb-glow, #timer.danger .eb-glow { animation: eb-pulse var(--eb-speed) ease-in-out infinite; }
+@keyframes timer-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+@keyframes eb-pulse { 0%, 100% { opacity: 0.12; } 50% { opacity: 0.9; } }
 
 .score-row {
   display: flex;
@@ -236,14 +251,13 @@ html, body {
   backdrop-filter: blur(10px);
 }
 
-/* (timer is styled inline in the top bar -- see the base #timer rule) */
-#timer.urgent { color: #ff5a6e; }
+/* (timer + its electric border are styled with the base #timer rule) */
 
 /* Block-level top bar: settings (left), full ranking split around the centered
    timer. Entries are sorted by coverage and smoothly re-shuffle (FLIP). */
 #topbar {
   position: relative;       /* block element in the document flow */
-  flex: none;
+  z-index: 3;               /* under the canvas overlay (4); brush tips draw over it */
   width: 100%;
   height: 40px;
   display: flex;
