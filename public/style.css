@@ -132,6 +132,10 @@ html, body {
   filter: blur(9px);
   mix-blend-mode: screen;
   clip-path: polygon(49.2% 0, 50.8% 0, 100% 100%, 0 100%);
+  /* Feather the sides so only the bright central cone reads -- the wide wedge
+     edges fade into the dark instead of splaying out as hard "disco" rays. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 4%, #000 33%, #000 67%, transparent 96%);
+          mask-image: linear-gradient(90deg, transparent 4%, #000 33%, #000 67%, transparent 96%);
   transform-origin: 50% 0;
   will-change: transform, opacity;
   animation: sc-beam-bobble var(--beam-speed, 3.2s) ease-in-out infinite alternate;
