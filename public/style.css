@@ -65,45 +65,55 @@ html, body {
   pointer-events: none;
 }
 
-/* Timer: a centered chip in the top bar with an animated "electric" border that
-   colors + breathes as time runs out (yellow <30s, red <10s; JS sets --eb-speed
-   so the breathing intensifies toward 0). */
+/* Timer: a centered chip with a layered "electric border" (displaced ring +
+   stacked glow rings + ambient bloom). Color temperature climbs as time runs
+   out -- cool -> yellow (<30s) -> red (<10s) -- and it breathes faster toward 0
+   (JS sets --eb-speed). */
 #timer {
   position: relative;
   flex: none;
   font-size: 19px;
   font-weight: 700;
   letter-spacing: 1px;
-  padding: 4px 16px;
-  border-radius: 9px;
-  background: rgba(0, 0, 0, 0.5);
+  padding: 4px 18px;
+  border-radius: 10px;
+  background: rgba(6, 8, 12, 0.62);
   font-variant-numeric: tabular-nums;
-  --eb: rgba(255, 255, 255, 0.5);   /* electric color (calm by default) */
-  --eb-speed: 2.4s;                  /* breathing period (shortened by JS near 0) */
   isolation: isolate;
+  --eb: #38b6ff;          /* electric color (cool by default) */
+  --eb-light: #cdebff;    /* highlight tint */
+  --eb-glow: 0.55;        /* glow strength */
+  --eb-speed: 2.4s;       /* breathing period (shortened by JS near 0) */
 }
-#timer .timer-val { position: relative; z-index: 2; color: var(--st-fg); text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7); }
-#timer .eb-border {
-  position: absolute; inset: 0; z-index: 1; border-radius: 9px;
-  border: 1.5px solid var(--eb);
-  filter: url(#eb-displace);
-  pointer-events: none;
+#timer > span:not(.timer-val) {
+  position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
 }
-#timer .eb-glow {
-  position: absolute; inset: -2px; z-index: 0; border-radius: 11px;
-  border: 2px solid var(--eb);
-  filter: blur(5px);
-  opacity: 0;
-  pointer-events: none;
+#timer .eb-base   { border: 1.5px solid color-mix(in srgb, var(--eb) 42%, transparent); }
+#timer .eb-main   { border: 1.5px solid var(--eb); filter: url(#eb-displace); }
+#timer .eb-glow-1 { border: 2px solid var(--eb);         filter: blur(2px); opacity: var(--eb-glow); }
+#timer .eb-glow-2 { border: 2.5px solid var(--eb-light); filter: blur(6px); opacity: calc(var(--eb-glow) * 0.7); }
+#timer .eb-bg {
+  inset: -4px; border-radius: 13px; z-index: -1;
+  transform: scale(1.04); filter: blur(13px);
+  opacity: calc(var(--eb-glow) * 0.6);
+  background: linear-gradient(-30deg, var(--eb-light), transparent 45%, var(--eb));
 }
-#timer.warn { --eb: #ffd23f; }
-#timer.danger { --eb: #ff4747; }
-#timer.warn .timer-val { color: #ffe487; }
-#timer.danger .timer-val { color: #ff8d8d; }
-#timer.warn, #timer.danger { animation: timer-breathe var(--eb-speed) ease-in-out infinite; }
-#timer.warn .eb-glow, #timer.danger .eb-glow { animation: eb-pulse var(--eb-speed) ease-in-out infinite; }
-@keyframes timer-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
-@keyframes eb-pulse { 0%, 100% { opacity: 0.12; } 50% { opacity: 0.9; } }
+#timer .timer-val { position: relative; z-index: 2; color: var(--st-fg); text-shadow: 0 1px 5px rgba(0, 0, 0, 0.75); }
+
+/* States: color temperature + glow rise as the clock runs down. */
+#timer.warn   { --eb: #ffcf3a; --eb-light: #fff0b8; --eb-glow: 0.8; }
+#timer.danger { --eb: #ff4242; --eb-light: #ffc2c2; --eb-glow: 1; }
+#timer.warn .timer-val   { color: #ffe79a; }
+#timer.danger .timer-val { color: #ff9b9b; }
+
+/* Breathing (scale + glow pulse) only in the final 30s; --eb-speed intensifies it. */
+#timer.warn, #timer.danger { animation: eb-breathe var(--eb-speed) ease-in-out infinite; }
+#timer.warn   .eb-glow-1, #timer.warn   .eb-glow-2, #timer.warn   .eb-bg,
+#timer.danger .eb-glow-1, #timer.danger .eb-glow-2, #timer.danger .eb-bg {
+  animation: eb-pulse var(--eb-speed) ease-in-out infinite;
+}
+@keyframes eb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes eb-pulse   { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 
 .score-row {
   display: flex;
