@@ -1,7 +1,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Battle Painters client: render the authoritative grid, predict own movement,
+// Battle Painter client: render the authoritative grid, predict own movement,
 // interpolate others, send 8-direction input, draw animated sprites + powerups.
 // ---------------------------------------------------------------------------
 

@@ -11,7 +11,7 @@ const server = http.createServer(createStaticHandler(publicDir));
 const game = createGameServer(server);
 
 server.listen(PORT, () => {
-  console.log(`Battle Painters running at http://localhost:${PORT}`);
+  console.log(`Battle Painter running at http://localhost:${PORT}`);
   console.log(`Grid ${GRID_W}x${GRID_H} @ ${CELL}px  |  sim ${SIM_HZ}Hz / net ${BROADCAST_HZ}Hz  |  round ${ROUND_MS / 1000}s  |  multi-room + bot backfill`);
 });
 

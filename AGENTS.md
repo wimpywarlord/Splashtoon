@@ -1,4 +1,4 @@
-# Battle Painters Agent Instructions
+# Battle Painter Agent Instructions
 
 These instructions apply to the whole repository.
 

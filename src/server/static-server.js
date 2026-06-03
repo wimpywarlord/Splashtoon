@@ -10,6 +10,7 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.webp': 'image/webp',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
   '.webmanifest': 'application/manifest+json',
 };
 
