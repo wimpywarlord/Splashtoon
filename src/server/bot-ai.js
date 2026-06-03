@@ -52,12 +52,44 @@ const ZONE_H_PX = WORLD_H / COARSE_ZH;
 const BAD_POWERUPS = new Set(['slow', 'selfFreeze', 'selfInkjam', 'badMissile', 'tiny']);
 
 const NAME_POOL = [
+  // Short handles — the original friendly pool.
   'Riley', 'Kai', 'Mara', 'Devon', 'Sora', 'Nova', 'Pip', 'Jules', 'Remy', 'Ash',
   'Wren', 'Theo', 'Luca', 'Indi', 'Zane', 'Quin', 'Maya', 'Otis', 'Cleo', 'Finn',
   'Iris', 'Beck', 'Yuki', 'Dex', 'Lola', 'Nico', 'Sage', 'Tovi', 'Ezra', 'Juno',
   'Koa', 'Vera', 'Milo', 'Rue', 'Bex', 'Hana', 'Cy', 'Wade', 'Pax', 'Lux',
   'Nori', 'Tam', 'Odette', 'Bo', 'Suri', 'Vik', 'Echo', 'Fawn', 'Gus', 'Hex',
   'Isa', 'Jett', 'Kit', 'Lior', 'Moss', 'Nyx', 'Onyx', 'Posy', 'Rio', 'Skye',
+
+  // Trash-talk / sweaty gamer energy.
+  'Sweatlord', 'NoScope', 'Tryhard', 'Clutchh', 'Whiffmaster', 'GankSquad',
+  'BotSlayer', 'EZClap', 'GitGud', 'RageQuitt', 'TiltLord', 'Diffed',
+  'OneShot', 'HardStuck', 'SmurfAlt', 'Cracked', 'Demon', 'Goated',
+  'Unkillable', 'FreeKill', 'Thrower', 'BaitedU', 'Camper', 'Spawnkill',
+  'Wallbang', 'Headtaker', 'LagSwitch', 'PingAbuse', 'ZeroBraincell', 'GGEZ',
+
+  // Cool / edgy handles.
+  'VoidWalker', 'NightShade', 'AshKetchup', 'Cyanide', 'Venom', 'Static',
+  'Reckless', 'Outlaww', 'Phantom', 'Riptide', 'Bonecrush', 'Havok',
+  'Crimson', 'Obsidian', 'Wraith', 'Vandal', 'Renegade', 'Maverick',
+  'Saint', 'Sinister', 'Hollow', 'Frostbite', 'Wildfire', 'Blackout',
+  'Mortis', 'Pariah', 'Anarchy', 'Bedlam', 'Carnage', 'Riot',
+
+  // Nerdy / techy / chronically-online.
+  'NullPointer', 'SegFault', '404Brain', 'RubberDuck', 'KernelPanic', 'StackUnderflow',
+  'DarkMode', 'GitBlame', 'SudoSlay', 'PixelPusher', 'CtrlAltDefeat', 'BigOhNo',
+  'Compiler', 'Latency', 'Bandwidth', 'Caffeine', 'TabsNotSpaces', 'RegexLord',
+  'HelloWorld', 'OffByOne', 'MergeConflict', 'ForkBomb', 'Heisenbug', 'ZeroDay',
+  'BinaryStar', 'QuantumLeap', 'NeonByte', 'CyberPunk', 'GlitchKing', 'Overclockd',
+
+  // Alphanumeric / leetspeak tags.
+  'xX_Reaper_Xx', 'Pr0Gamer', 'N00bSlayer', 'L33tShot', 'Sn1per', 'Gh0st',
+  'Dr4gon', 'Sp4rt4n', '8BitBandit', 'V1per', 'Z3roCool', 'M3taKnight',
+  'Fr0stByte', 'Cyb3rWolf', 'Hyp3rNova', 'Tox1c', 'Sk1llIssue', 'R3kt',
+  'Bl4ze', 'Sh4dow', 'Cr1tical', 'Ap3xPred', 'Nyx404', 'Hex0r',
+
+  // Animal / mascot vibes.
+  'WolfPack', 'ApexFox', 'IronHawk', 'KrakenX', 'RhinoRush', 'CobraStrike',
+  'BlitzBear', 'SilentOwl', 'MadHornet', 'StormRaven', 'DireWolf', 'VenomViper',
 ];
 
 // Personality archetypes. Ranges [min,max] are sampled per bot. Tuned sharper
