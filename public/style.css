@@ -20,16 +20,16 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Centered game stage; JS sizes only the canvas content area. */
+/* Document-flow column: ranking bar on top, canvas fills the rest below it. */
 #stage {
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   padding: 0;
   background: #0a0b10;
   isolation: isolate;
+  overflow: hidden;
 }
 
 /* Full-bleed: the canvas now covers the whole viewport, so the old arcade frame
@@ -55,36 +55,21 @@ html, body {
     inset 0 -34px 88px rgba(224, 71, 34, 0.16);
 }
 
-/* The board, its white border and drop shadow are now drawn inside the canvas
-   (so brushes can lean past the edge). The wrapper is just a passthrough. */
+/* Playfield: fills the height left under the bar; the canvas + overlays live here. */
 #stage-frame {
   position: relative;
-  z-index: 1;
-  padding: 0;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   line-height: 0;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  overflow: hidden;
 }
 
 #stage-frame::before { display: none; }
 
 #game {
-  position: relative;
-  z-index: 1;
   display: block;
   background: transparent;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-/* HUD overlays are positioned over the canvas bounding box via JS. */
-#hud {
-  position: absolute;
-  pointer-events: none;
-  inset: 0;
-  z-index: 3;
 }
 
 /* Timer: a flex child centered in the top bar (see #topbar). */
@@ -257,20 +242,18 @@ html, body {
 /* Block-level top bar: settings (left), full ranking split around the centered
    timer. Entries are sorted by coverage and smoothly re-shuffle (FLIP). */
 #topbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: relative;       /* block element in the document flow */
+  flex: none;
+  width: 100%;
   height: 40px;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  background: linear-gradient(180deg, rgba(8, 9, 13, 0.85), rgba(8, 9, 13, 0.55));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: linear-gradient(180deg, #15171f, #0e1016);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-variant-numeric: tabular-nums;
+  overflow: hidden;         /* clip ranking chips if they exceed the width */
 }
 .rank-group {
   flex: 1;

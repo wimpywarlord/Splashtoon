@@ -52,9 +52,10 @@ ctx.imageSmoothingEnabled = true;   // smooth sprite + paint scaling (was pixela
 
 const els = {
   timer: document.getElementById('timer'),
+  topbar: document.getElementById('topbar'),
+  stageFrame: document.getElementById('stage-frame'),
   rankLeft: document.getElementById('rank-left'),
   rankRight: document.getElementById('rank-right'),
-  hud: document.getElementById('hud'),
   spectate: document.getElementById('spectate'),
   results: document.getElementById('results'),
   resultTitle: document.getElementById('result-title'),
@@ -1026,27 +1027,24 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 
-// ---- Layout (borderless, full-screen) ---------------------------------------
+// ---- Layout: canvas fills the playfield (viewport minus the bar) -------------
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const iw = window.innerWidth, ih = window.innerHeight;
+  // The playfield is the flex:1 region under the bar; size the canvas to exactly
+  // that, so the bar + canvas fill the viewport with no overflow.
+  const cw = Math.max(160, (els.stageFrame ? els.stageFrame.clientWidth : window.innerWidth));
+  const ch = Math.max(120, (els.stageFrame ? els.stageFrame.clientHeight : window.innerHeight));
   cam.dpr = dpr;
-  cam.cssW = iw;
-  cam.cssH = ih;
-  cam.zoom = Math.max(iw / G.worldW, ih / G.worldH);   // cover the viewport
+  cam.cssW = cw;
+  cam.cssH = ch;
+  cam.zoom = Math.max(cw / G.worldW, ch / G.worldH);   // cover the playfield
 
-  canvas.style.width = `${iw}px`;
-  canvas.style.height = `${ih}px`;
-  canvas.width = Math.round(iw * dpr);
-  canvas.height = Math.round(ih * dpr);
+  canvas.style.width = `${cw}px`;
+  canvas.style.height = `${ch}px`;
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-
-  // HUD spans the whole viewport (timer, mute, ranking bar overlay the game).
-  els.hud.style.left = '0px';
-  els.hud.style.top = '0px';
-  els.hud.style.width = `${iw}px`;
-  els.hud.style.height = `${ih}px`;
 }
 window.addEventListener('resize', resize);
 
@@ -1113,8 +1111,13 @@ function toggleSettings(force) {
   els.settingsBtn.setAttribute('aria-expanded', String(open));
 }
 
-// Hide the in-game HUD on the menu so the background is a clean attract-mode game.
-function setHudVisible(v) { if (els.hud) els.hud.style.display = v ? '' : 'none'; }
+// The bar collapses on the menu (canvas fills the whole screen for the attract
+// sim) and reappears in-game; toggling it changes the playfield, so re-size.
+function setBarVisible(v) {
+  if (els.topbar) els.topbar.style.display = v ? '' : 'none';
+  if (!v && els.settingsMenu) els.settingsMenu.classList.add('hidden');
+  resize();
+}
 
 function initMenu() {
   inMenu = true;
@@ -1124,7 +1127,7 @@ function initMenu() {
   }
   renderStats();
   syncSoundUI();
-  setHudVisible(false);
+  setBarVisible(false);
   show(els.start);
   hide(els.spectate);
   hide(els.results);
@@ -1137,7 +1140,7 @@ function startPlay() {
   if (Store) Store.setName(myName);
   inMenu = false;
   if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture
-  setHudVisible(true);
+  setBarVisible(true);
   hide(els.start);
   connect();            // open the connection only now
 }
