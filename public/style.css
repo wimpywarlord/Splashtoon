@@ -65,32 +65,327 @@ html, body {
   pointer-events: none;
 }
 
-/* Pre-round 3-2-1 countdown: a big centered number over the board, hidden until the
-   'countdown' phase. Non-interactive; re-pops on each number change; GO! goes orange. */
+/* Pre-round countdown: Spirit Crown stage over the board. The server freezes
+   players during this phase; this overlay is visual only. */
 #countdown {
   position: absolute;
   inset: 0;
   z-index: 6;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.14s ease;
-  font-weight: 900;
-  font-size: clamp(120px, 28vh, 300px);
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  color: #ffffff;
-  text-shadow: 0 6px 22px rgba(0, 0, 0, 0.6), 0 0 60px rgba(255, 122, 79, 0.45);
 }
 #countdown.show { opacity: 1; }
-#countdown.go { color: var(--st-primary); text-shadow: 0 8px 40px rgba(0, 0, 0, 0.75), 0 0 48px var(--st-primary); }
-#countdown.pop { animation: cd-pop 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
-@keyframes cd-pop {
-  0%   { transform: scale(0.45); }
-  55%  { transform: scale(1.14); }
-  100% { transform: scale(1); }
+#countdown.pop .sc-stage { animation: cd-pop-stage 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+@keyframes cd-pop-stage {
+  0%   { transform: translate(-50%, calc(-50% - var(--sc-lift))) scale(0.45); }
+  55%  { transform: translate(-50%, calc(-50% - var(--sc-lift))) scale(1.14); }
+  100% { transform: translate(-50%, calc(-50% - var(--sc-lift))) scale(1); }
+}
+.sc-stage {
+  --sc-a: #ff4d8d;
+  --sc-b: #ffd23f;
+  --sc-ink: #07080d;
+  --sc-lift: 9%;
+  position: absolute;
+  left: calc(var(--cd-left, 0px) + var(--cd-w, 100vw) / 2);
+  top: calc(var(--cd-top, 40px) + var(--cd-h, calc(100vh - 40px)) / 2);
+  width: min(72vw, var(--cd-w, 540px), 540px);
+  aspect-ratio: 1.62 / 1;
+  z-index: 1;
+  isolation: isolate;
+  overflow: visible;
+  background: transparent;
+  transform: translate(-50%, calc(-50% - var(--sc-lift)));
+}
+.sc-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: none;
+}
+.sc-stage[data-value="GO!"] {
+  --sc-a: #ff4d8d;
+  --sc-b: #36d8ff;
+}
+.sc-stage[data-value="GO!"]::before {
+  background: none;
+}
+.sc-beam,
+.sc-ring,
+.sc-swash,
+.sc-sparkle,
+.sc-sprite {
+  position: absolute;
+  pointer-events: none;
+}
+.sc-beam {
+  left: calc(var(--cd-left, 0px) + var(--cd-w, 100vw) / 2);
+  top: var(--cd-top, 40px);
+  height: calc(var(--cd-h, calc(100vh - 40px)) * 0.68);
+  width: min(26vw, 360px);
+  z-index: 0;
+  filter: blur(9px);
+  mix-blend-mode: screen;
+  clip-path: polygon(49.2% 0, 50.8% 0, 100% 100%, 0 100%);
+  transform-origin: 50% 0;
+  will-change: transform, opacity;
+  animation: sc-beam-bobble var(--beam-speed, 3.2s) ease-in-out infinite alternate;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--beam) 46%, transparent) 0%,
+      color-mix(in srgb, var(--beam) 20%, transparent) 42%,
+      transparent 100%
+    );
+}
+.sc-beam-a {
+  --beam: #ff4d8d;
+  --beam-rot: -11deg;
+  --beam-low: 0.18;
+  --beam-high: 0.34;
+  --bobble-x: 2.8%;
+  --beam-speed: 3s;
+}
+.sc-beam-b {
+  --beam: #ffd23f;
+  --beam-rot: 0deg;
+  --beam-low: 0.14;
+  --beam-high: 0.28;
+  --bobble-x: 2.2%;
+  --beam-speed: 3.8s;
+  width: min(20vw, 280px);
+  animation-delay: -1.1s;
+  animation-direction: alternate-reverse;
+}
+.sc-beam-c {
+  --beam: #36d8ff;
+  --beam-rot: 11deg;
+  --beam-low: 0.12;
+  --beam-high: 0.26;
+  --bobble-x: 2.8%;
+  --beam-speed: 4.4s;
+  width: min(24vw, 330px);
+  animation-delay: -0.55s;
+}
+#countdown.go .sc-beam-b {
+  --beam: #ffffff;
+  --beam-low: 0.12;
+  --beam-high: 0.26;
+}
+.sc-ring {
+  display: none;
+  inset: 7% 12% 19%;
+  z-index: 1;
+  border: 3px solid color-mix(in srgb, var(--sc-a) 70%, rgba(255, 255, 255, 0.22));
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 24px color-mix(in srgb, var(--sc-a) 18%, transparent),
+    0 0 30px color-mix(in srgb, var(--sc-a) 38%, transparent);
+}
+.sc-stage[data-value="GO!"] .sc-ring {
+  border-color: rgba(255, 77, 141, 0.82);
+  box-shadow:
+    inset 0 0 24px rgba(255, 77, 141, 0.16),
+    0 0 30px rgba(54, 216, 255, 0.28);
+}
+.sc-swash {
+  z-index: 2;
+  left: 22%;
+  right: 22%;
+  bottom: 8%;
+  height: 13%;
+  border-radius: 50% / 44%;
+  clip-path: ellipse(50% 36% at 50% 54%);
+  background:
+    radial-gradient(ellipse at 22% 38%, rgba(255, 255, 255, 0.96) 0 6px, transparent 7px),
+    radial-gradient(ellipse at 72% 42%, color-mix(in srgb, var(--sc-b) 68%, #fff) 0 8px, transparent 9px),
+    linear-gradient(100deg, color-mix(in srgb, var(--sc-a) 90%, #fff), var(--sc-b));
+  filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.38));
+  opacity: 0.9;
+}
+.sc-stage[data-value="GO!"] .sc-swash {
+  background:
+    radial-gradient(ellipse at 22% 38%, rgba(255, 255, 255, 0.96) 0 6px, transparent 7px),
+    radial-gradient(ellipse at 72% 42%, rgba(54, 216, 255, 0.72) 0 8px, transparent 9px),
+    linear-gradient(100deg, #ff4d8d, #36d8ff);
+}
+.sc-digit {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 12%;
+  color: #fff7ee;
+  font-family: Impact, "Avenir Next Condensed", "Arial Black", sans-serif;
+  font-size: clamp(88px, 22vh, 198px);
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-stroke: clamp(5px, 0.8vh, 9px) var(--sc-ink);
+  text-shadow:
+    0 9px 0 rgba(0, 0, 0, 0.52),
+    0 0 26px color-mix(in srgb, var(--sc-a) 58%, transparent),
+    0 0 54px color-mix(in srgb, var(--sc-b) 28%, transparent);
+}
+.sc-stage[data-value="GO!"] .sc-digit {
+  padding-bottom: 15%;
+  font-size: clamp(52px, 13.5vh, 118px);
+  color: #fff0c9;
+  -webkit-text-stroke-width: clamp(4px, 0.65vh, 7px);
+}
+.sc-sprite {
+  --row: 0;
+  --col: 0;
+  z-index: 5;
+  width: var(--size, 86px);
+  aspect-ratio: 192 / 208;
+  background-image: url("/assets/brush-spirit.png");
+  background-size: 800% 900%;
+  background-position:
+    calc(var(--col) * 100% / 7)
+    calc(var(--row) * 100% / 8);
+  filter:
+    drop-shadow(0 8px 0 rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--sc-a) 46%, transparent));
+  transform-origin: 50% 76%;
+}
+.sc-sprite-main {
+  --size: min(15vw, 90px);
+  left: 50%;
+  bottom: 2%;
+  transform: translateX(-50%);
+}
+.sc-sprite-second {
+  --size: min(12.5vw, 74px);
+  left: 23%;
+  bottom: 15%;
+  transform: scaleX(-1);
+}
+.sc-sprite-third {
+  --size: min(12.5vw, 74px);
+  right: 23%;
+  bottom: 15%;
+}
+.sc-sparkle {
+  z-index: 6;
+  left: var(--spark-x);
+  top: var(--spark-y);
+  width: var(--spark-size, 6px);
+  height: var(--spark-size, 6px);
+  border-radius: 50%;
+  background: var(--spark-color, #fff);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--spark-color, #fff) 62%, transparent);
+  will-change: transform, opacity;
+  animation: sc-spark-float var(--spark-speed, 3s) ease-in-out infinite;
+  animation-delay: var(--spark-delay, 0s);
+}
+.sc-sparkle::after {
+  content: "";
+  position: absolute;
+  inset: -80%;
+  background:
+    linear-gradient(90deg, transparent 42%, color-mix(in srgb, var(--spark-color, #fff) 86%, transparent) 47% 53%, transparent 58%),
+    linear-gradient(0deg, transparent 42%, color-mix(in srgb, var(--spark-color, #fff) 86%, transparent) 47% 53%, transparent 58%);
+  opacity: 0.58;
+}
+.sc-sparkle-a {
+  --spark-x: 19%;
+  --spark-y: 25%;
+  --spark-size: 6px;
+  --spark-color: #ff4d8d;
+  --spark-dx: 24px;
+  --spark-dy: -20px;
+  --spark-speed: 3.3s;
+}
+.sc-sparkle-b {
+  --spark-x: 68%;
+  --spark-y: 18%;
+  --spark-size: 10px;
+  --spark-color: #ffffff;
+  --spark-dx: -20px;
+  --spark-dy: 24px;
+  --spark-speed: 3.8s;
+  --spark-delay: -1.2s;
+}
+.sc-sparkle-c {
+  --spark-x: 84%;
+  --spark-y: 38%;
+  --spark-size: 5px;
+  --spark-color: #36d8ff;
+  --spark-dx: -28px;
+  --spark-dy: -12px;
+  --spark-speed: 4.2s;
+  --spark-delay: -0.65s;
+}
+.sc-sparkle-d {
+  --spark-x: 29%;
+  --spark-y: 70%;
+  --spark-size: 9px;
+  --spark-color: #ffffff;
+  --spark-dx: 16px;
+  --spark-dy: -26px;
+  --spark-speed: 3.6s;
+  --spark-delay: -1.7s;
+}
+.sc-sparkle-e {
+  --spark-x: 76%;
+  --spark-y: 71%;
+  --spark-size: 6px;
+  --spark-color: #ffd23f;
+  --spark-dx: -22px;
+  --spark-dy: -16px;
+  --spark-speed: 4.7s;
+  --spark-delay: -2.1s;
+}
+@keyframes sc-beam-bobble {
+  0% {
+    opacity: var(--beam-low);
+    transform: translateX(calc(-50% - var(--bobble-x))) rotate(calc(var(--beam-rot) - 2deg));
+  }
+  52% { opacity: var(--beam-high); }
+  100% {
+    opacity: var(--beam-high);
+    transform: translateX(calc(-50% + var(--bobble-x))) rotate(calc(var(--beam-rot) + 2deg));
+  }
+}
+@keyframes sc-spark-float {
+  0%, 100% {
+    opacity: 0.24;
+    transform: translate3d(0, 0, 0) scale(0.72);
+  }
+  45% {
+    opacity: 1;
+    transform: translate3d(var(--spark-dx), var(--spark-dy), 0) scale(1.15);
+  }
+  70% {
+    opacity: 0.7;
+    transform: translate3d(0, var(--spark-dy), 0) scale(0.92);
+  }
+}
+
+@media (max-width: 700px) {
+  .sc-stage {
+    --sc-lift: 6%;
+    width: min(86vw, 430px);
+    aspect-ratio: 1.2 / 1;
+  }
+  .sc-digit {
+    font-size: clamp(78px, 19vh, 166px);
+  }
+  .sc-stage[data-value="GO!"] .sc-digit {
+    font-size: clamp(46px, 12vh, 96px);
+  }
+  .sc-sprite-main { --size: min(19vw, 82px); }
+  .sc-sprite-second,
+  .sc-sprite-third { --size: min(16vw, 68px); }
 }
 
 /* Timer: a centered chip with a layered "electric border" (displaced ring +

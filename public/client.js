@@ -1031,6 +1031,18 @@ function drawActors() {
   for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.castType, a.inputActive, a.paintScale);
 }
 
+function syncCountdownBounds(x, y, w, h) {
+  const el = els.countdown;
+  if (!el) return;
+  const key = `${Math.round(x)}:${Math.round(y)}:${Math.round(w)}:${Math.round(h)}`;
+  if (el.dataset.boundsKey === key) return;
+  el.dataset.boundsKey = key;
+  el.style.setProperty('--cd-left', `${x.toFixed(2)}px`);
+  el.style.setProperty('--cd-top', `${y.toFixed(2)}px`);
+  el.style.setProperty('--cd-w', `${w.toFixed(2)}px`);
+  el.style.setProperty('--cd-h', `${h.toFixed(2)}px`);
+}
+
 function render() {
   const dpr = cam.dpr;
   const barH = cam.barH || 0;
@@ -1046,6 +1058,7 @@ function render() {
   // Flush to the bar: the board fills the height below it (bar takes the remaining
   // height up top); brush tips lean over the bar. Any side slack is chrome.
   const oy = barH;
+  syncCountdownBounds(ox, oy, bw, bh);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1090,12 +1103,68 @@ function fmtTime(ms) {
 // Pre-round countdown overlay state + setter (re-pops on each number change).
 let lastCountdownPhase = '';
 let goUntil = 0;
+
+const COUNTDOWN_CROWN_SPRITES = {
+  '3': [
+    { cls: 'sc-sprite-main', row: 3, col: 1 },
+    { cls: 'sc-sprite-second', row: 7, col: 2 },
+    { cls: 'sc-sprite-third', row: 6, col: 2 },
+  ],
+  '2': [
+    { cls: 'sc-sprite-main', row: 5, col: 2 },
+    { cls: 'sc-sprite-second', row: 3, col: 4 },
+    { cls: 'sc-sprite-third', row: 6, col: 4 },
+  ],
+  '1': [
+    { cls: 'sc-sprite-main', row: 7, col: 4 },
+    { cls: 'sc-sprite-second', row: 4, col: 1 },
+    { cls: 'sc-sprite-third', row: 6, col: 6 },
+  ],
+  'GO!': [
+    { cls: 'sc-sprite-main', row: 4, col: 3 },
+    { cls: 'sc-sprite-second', row: 7, col: 0 },
+    { cls: 'sc-sprite-third', row: 6, col: 0 },
+  ],
+};
+
+const COUNTDOWN_CROWN_COLORS = {
+  '3': { a: '#ff4d8d', b: '#ffd23f' },
+  '2': { a: '#36d8ff', b: '#7c4dff' },
+  '1': { a: '#ffd23f', b: '#ff4d6d' },
+  'GO!': { a: '#ff4d8d', b: '#36d8ff' },
+};
+
+function renderCountdownCrown(text) {
+  const colors = COUNTDOWN_CROWN_COLORS[text] || COUNTDOWN_CROWN_COLORS['3'];
+  const sprites = COUNTDOWN_CROWN_SPRITES[text] || COUNTDOWN_CROWN_SPRITES['3'];
+  const spriteHtml = sprites.map((sprite) => (
+    `<span class="sc-sprite ${sprite.cls}" style="--row:${sprite.row}; --col:${sprite.col};" aria-hidden="true"></span>`
+  )).join('');
+
+  return `
+    <span class="sc-beam sc-beam-a" aria-hidden="true"></span>
+    <span class="sc-beam sc-beam-b" aria-hidden="true"></span>
+    <span class="sc-beam sc-beam-c" aria-hidden="true"></span>
+    <div class="sc-stage" data-value="${text}" style="--sc-a:${colors.a}; --sc-b:${colors.b};">
+      <span class="sc-sparkle sc-sparkle-a" aria-hidden="true"></span>
+      <span class="sc-sparkle sc-sparkle-b" aria-hidden="true"></span>
+      <span class="sc-sparkle sc-sparkle-c" aria-hidden="true"></span>
+      <span class="sc-sparkle sc-sparkle-d" aria-hidden="true"></span>
+      <span class="sc-sparkle sc-sparkle-e" aria-hidden="true"></span>
+      <span class="sc-ring" aria-hidden="true"></span>
+      <span class="sc-swash" aria-hidden="true"></span>
+      <span class="sc-digit">${text}</span>
+      ${spriteHtml}
+    </div>
+  `;
+}
+
 function setCountdown(text) {
   const el = els.countdown;
   if (!el) return;
   if (text) {
     if (el.dataset.v !== text) {
-      el.textContent = text;
+      el.innerHTML = renderCountdownCrown(text);
       el.dataset.v = text;
       el.classList.toggle('go', text === 'GO!');
       el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');   // restart the pop
