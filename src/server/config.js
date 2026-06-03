@@ -46,7 +46,7 @@ const BRUSH_R = 16;
 const STAMP_STEP = BRUSH_R / 2;
 const MIN_PAINT_MOVE2 = 0.4;
 
-const ROUND_MS = 120_000;
+const ROUND_MS = 10_000;   // temporary short round for round-end UI testing
 const INTERMISSION_MS = 10_000;
 const COUNTDOWN_MS = 3_000;   // pre-round 3-2-1 freeze so the whole field starts together
 

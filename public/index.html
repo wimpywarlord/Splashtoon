@@ -93,11 +93,15 @@
 
     <!-- Round-over results -->
     <div id="results" class="overlay hidden">
-      <div class="card">
+      <canvas id="results-confetti" aria-hidden="true"></canvas>
+      <div id="round-end-card" class="round-end-card">
+        <div id="result-kicker" class="result-kicker">Round over</div>
         <div id="result-title" class="big">ROUND OVER</div>
         <div id="result-list"></div>
-        <div class="sub">Next round in <span id="next-countdown">10</span>s</div>
-        <button id="results-menu-btn" class="btn btn-ghost" type="button">Leave to menu</button>
+        <div class="result-footer">
+          <div class="sub">Next round in <span id="next-countdown">10</span>s</div>
+          <button id="results-menu-btn" class="btn btn-ghost" type="button">Leave to menu</button>
+        </div>
       </div>
     </div>
 

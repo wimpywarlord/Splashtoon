@@ -61,6 +61,9 @@ const els = {
   rankRight: document.getElementById('rank-right'),
   spectate: document.getElementById('spectate'),
   results: document.getElementById('results'),
+  resultsCard: document.getElementById('round-end-card'),
+  resultsConfetti: document.getElementById('results-confetti'),
+  resultKicker: document.getElementById('result-kicker'),
   resultTitle: document.getElementById('result-title'),
   resultList: document.getElementById('result-list'),
   nextCountdown: document.getElementById('next-countdown'),
@@ -81,6 +84,15 @@ const els = {
 
 const GameAudio = window.SplashtoonAudio;
 const Store = window.SplashtoonStore;
+
+const RESULT_CONFETTI_DENSITY = 220;
+const RESULT_CONFETTI_SPEED = 1.0;
+const RESULT_CONFETTI_GRAVITY = 330;
+const RESULT_CONFETTI_COLORS = ['#ffe05d', '#16d7c7', '#ff5b51', '#a8ff78', '#f8f6ef', '#4f7dff'];
+let resultConfettiCtx = els.resultsConfetti ? els.resultsConfetti.getContext('2d') : null;
+let resultConfettiParticles = [];
+let resultConfettiRaf = 0;
+let resultConfettiLast = 0;
 
 // ---- World / game state -----------------------------------------------------
 const G = {
@@ -207,6 +219,7 @@ function handle(msg) {
       applySnapshot(msg.cells, msg.paintEvents || []);
       applyPlayers(msg.players, true);
       resetTrailAnchors();
+      stopResultConfetti();
       hide(els.results);
       refreshOverlays();
       lastTickSecond = -1;
@@ -282,7 +295,7 @@ function handle(msg) {
         renderStats();
       }
       if (GameAudio) GameAudio.roundEnd(won);
-      showResults(msg);
+      showResults(msg, won);
       break;
     }
   }
@@ -1276,36 +1289,144 @@ function refreshOverlays() {
   else hide(els.spectate);
 }
 
-function showResults(msg) {
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function resizeResultConfetti() {
+  if (!els.resultsConfetti || !resultConfettiCtx) return;
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const w = Math.round(window.innerWidth * dpr);
+  const h = Math.round(window.innerHeight * dpr);
+  if (els.resultsConfetti.width !== w) els.resultsConfetti.width = w;
+  if (els.resultsConfetti.height !== h) els.resultsConfetti.height = h;
+  els.resultsConfetti.style.width = `${window.innerWidth}px`;
+  els.resultsConfetti.style.height = `${window.innerHeight}px`;
+  resultConfettiCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function stopResultConfetti() {
+  if (resultConfettiRaf) cancelAnimationFrame(resultConfettiRaf);
+  resultConfettiRaf = 0;
+  resultConfettiParticles = [];
+  if (resultConfettiCtx) resultConfettiCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+}
+
+function makeResultConfettiParticle(i) {
+  const x = Math.random() * window.innerWidth;
+  const y = -18 - Math.random() * Math.min(180, window.innerHeight * 0.24);
+  const paintDrop = Math.random() < 0.26;
+  const size = paintDrop ? 8 + Math.random() * 12 : 6 + Math.random() * 13;
+  return {
+    x,
+    y,
+    vx: (Math.random() - 0.5) * 120,
+    vy: (100 + Math.random() * 210) * RESULT_CONFETTI_SPEED,
+    w: paintDrop ? size : 8 + Math.random() * 16,
+    h: paintDrop ? size * (0.7 + Math.random() * 0.34) : 4 + Math.random() * 9,
+    color: RESULT_CONFETTI_COLORS[Math.floor(Math.random() * RESULT_CONFETTI_COLORS.length)],
+    rot: Math.random() * Math.PI * 2,
+    vr: (Math.random() - 0.5) * 15,
+    life: -(i / RESULT_CONFETTI_DENSITY) * 1.15,
+    maxLife: 4.2 + Math.random() * 1.8,
+    gravity: (RESULT_CONFETTI_GRAVITY + Math.random() * 190) * RESULT_CONFETTI_SPEED,
+    drag: 0.982 + Math.random() * 0.012,
+    paintDrop,
+  };
+}
+
+function drawResultConfettiParticle(p) {
+  resultConfettiCtx.save();
+  resultConfettiCtx.globalAlpha = Math.max(0, 1 - p.life / p.maxLife);
+  resultConfettiCtx.translate(p.x, p.y);
+  resultConfettiCtx.rotate(p.rot);
+  resultConfettiCtx.fillStyle = p.color;
+  if (p.paintDrop) {
+    resultConfettiCtx.beginPath();
+    resultConfettiCtx.ellipse(0, 0, p.w * 0.56, p.h * 0.46, 0, 0, Math.PI * 2);
+    resultConfettiCtx.fill();
+    resultConfettiCtx.beginPath();
+    resultConfettiCtx.arc(p.w * 0.22, -p.h * 0.18, p.w * 0.17, 0, Math.PI * 2);
+    resultConfettiCtx.fill();
+  } else {
+    resultConfettiCtx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+  }
+  resultConfettiCtx.restore();
+}
+
+function drawResultConfetti(t) {
+  const dt = Math.min(0.033, (t - resultConfettiLast) / 1000 || 0.016);
+  resultConfettiLast = t;
+  resultConfettiCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  resultConfettiParticles = resultConfettiParticles.filter((p) => {
+    p.life += dt;
+    if (p.life < 0) return true;
+    p.vx *= p.drag;
+    p.vy = p.vy * p.drag + p.gravity * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.rot += p.vr * dt;
+    drawResultConfettiParticle(p);
+    return p.life < p.maxLife && p.y < window.innerHeight + 80;
+  });
+  if (resultConfettiParticles.length) {
+    resultConfettiRaf = requestAnimationFrame(drawResultConfetti);
+  } else {
+    stopResultConfetti();
+  }
+}
+
+function startResultConfetti() {
+  if (!els.resultsCard || !resultConfettiCtx || prefersReducedMotion()) return;
+  stopResultConfetti();
+  resizeResultConfetti();
+  resultConfettiParticles = Array.from({ length: RESULT_CONFETTI_DENSITY }, (_, i) => makeResultConfettiParticle(i));
+  resultConfettiLast = performance.now();
+  resultConfettiRaf = requestAnimationFrame(drawResultConfetti);
+}
+
+function showResults(msg, won) {
   hide(els.spectate);
+  stopResultConfetti();
   const total = G.w * G.h;
   if (msg.tie) {
     els.resultTitle.textContent = 'TIE!';
+    els.results.dataset.outcome = 'tie';
   } else if (msg.winnerSlot === mySlot && !spectating) {
     els.resultTitle.textContent = 'YOU WIN!';
+    els.results.dataset.outcome = 'winner';
   } else if (msg.winnerSlot >= 0) {
     // textContent (not innerHTML) -> winner name needs no escaping here.
     els.resultTitle.textContent = `${msg.winnerName || ('P' + (msg.winnerSlot + 1))} WINS`;
+    els.results.dataset.outcome = 'loser';
   } else {
     els.resultTitle.textContent = 'ROUND OVER';
+    els.results.dataset.outcome = 'neutral';
   }
+  if (els.resultKicker) els.resultKicker.textContent = msg.roundId != null ? `Round ${msg.roundId}` : 'Round over';
 
   const rows = msg.scores
     .map((score, slot) => ({ slot, score }))
     .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score);
+  const topScore = rows.length ? rows[0].score : 0;
   els.resultList.innerHTML = rows.map((r) => {
-    const pct = ((r.score / total) * 100).toFixed(1);
+    const pctValue = total ? (r.score / total) * 100 : 0;
+    const pct = pctValue.toFixed(1);
+    const relativePct = topScore ? (r.score / topScore) * 100 : 0;
+    const barPct = Math.max(8, Math.min(100, relativePct));
     const meCls = r.slot === mySlot && !spectating ? ' me' : '';
     const name = slotNames[r.slot] || `P${r.slot + 1}`;
-    return `<div class="result-row${meCls}">
+    return `<div class="result-row${meCls}" style="--bar-color:${palette[r.slot]};--pct:${barPct}%">
       <span class="swatch" style="background:${palette[r.slot]}"></span>
-      <span class="score-name" style="flex:1">${escapeHtml(name)}</span>
+      <span class="score-name">${escapeHtml(name)}</span>
+      <span class="result-bar" aria-hidden="true"><span></span></span>
       <span class="score-pct">${pct}%</span>
     </div>`;
-  }).join('') || '<div class="sub">Nobody painted anything!</div>';
+  }).join('') || '<div class="result-empty">Nobody painted anything!</div>';
 
   show(els.results);
+  if (won) startResultConfetti();
 
   // Local countdown for the intermission.
   let left = Math.ceil((msg.intermissionMs || 6000) / 1000);
@@ -1364,6 +1485,7 @@ function resize() {
   canvas.height = Math.round(vh * dpr);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
+  resizeResultConfetti();
 }
 window.addEventListener('resize', resize);
 
@@ -1515,6 +1637,7 @@ function initMenu() {
   setBarVisible(false);
   setNavVisible(true);
   hide(els.spectate);
+  stopResultConfetti();
   hide(els.results);
   setCountdown('');                          // clear any leftover countdown overlay
   lastCountdownPhase = ''; goUntil = 0;

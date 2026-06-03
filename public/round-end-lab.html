@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090a0d" />
+  <title>Round End Lab | Battle Painter</title>
+  <link rel="icon" href="/favicon.ico?v=3" sizes="any" />
+  <link rel="stylesheet" href="/round-end-lab.css" />
+</head>
+<body>
+  <canvas id="confetti-canvas" aria-hidden="true"></canvas>
+
+  <main class="lab-shell">
+    <header class="lab-top">
+      <a class="brand" href="/" aria-label="Battle Painter">
+        <img src="/assets/logo-brush-spirit.png" alt="" width="44" height="44" decoding="async" />
+        <span>Battle <b>Painters</b></span>
+      </a>
+      <div class="status-pill" id="audio-status">Audio locked</div>
+    </header>
+
+    <section class="stage" aria-live="polite">
+      <div class="result-panel" id="result-panel">
+        <div class="result-kicker" id="result-kicker">Round 12</div>
+        <h1 id="result-title">YOU WIN!</h1>
+        <div class="scoreboard" id="scoreboard"></div>
+        <div class="countdown-copy">Next round in <span id="next-countdown">10</span>s</div>
+      </div>
+
+      <aside class="control-rack" aria-label="Round end controls">
+        <div class="segmented" role="group" aria-label="Outcome">
+          <button class="seg active" type="button" data-outcome="winner">Winner</button>
+          <button class="seg" type="button" data-outcome="loser">Loser</button>
+          <button class="seg" type="button" data-outcome="tie">Tie</button>
+        </div>
+
+        <div class="actions">
+          <button class="run-btn" id="play-outcome" type="button">
+            <span class="run-icon" aria-hidden="true"></span>
+            <span>Play cue</span>
+          </button>
+          <button class="ghost-btn" id="confetti-only" type="button">Confetti only</button>
+        </div>
+
+        <label class="control">
+          <span>Confetti density</span>
+          <input id="density" type="range" min="20" max="260" value="180" />
+        </label>
+        <label class="control">
+          <span>Fall speed</span>
+          <input id="fall-speed" type="range" min="70" max="200" value="122" />
+        </label>
+        <label class="control check-control">
+          <span>Winner confetti</span>
+          <input id="winner-confetti" type="checkbox" checked />
+        </label>
+
+        <div class="audio-row">
+          <button class="mini-btn" id="sound-toggle" type="button">Sound on</button>
+          <button class="mini-btn" id="music-toggle" type="button">Music off</button>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script src="/js/store.js"></script>
+  <script src="/js/audio.js"></script>
+  <script src="/js/round-end-lab.js"></script>
+</body>
+</html>
