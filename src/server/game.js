@@ -37,6 +37,7 @@ function createGameServer(server) {
     const id = nextRoomId++;
     const room = new Room(id, manager);
     rooms.set(id, room);
+    room.startRound();              // always running a bot game (the landing-page background)
     return room;
   }
 
@@ -44,13 +45,17 @@ function createGameServer(server) {
     rooms.delete(room.id);
   }
 
-  // Prefer the fullest room that still has a free human slot, so humans cluster
-  // together instead of scattering one-per-room among bots.
-  function pickRoomForHuman() {
+  // Cluster people together: prefer the room with the most ready players that can
+  // still seat one more, then the most spectators. Spectators don't take slots,
+  // so many can share a room; a new room is only made when none can seat a player.
+  function pickRoom() {
     let best = null;
     for (const room of rooms.values()) {
-      if (room.humanCount() < MAX_PLAYERS) {
-        if (!best || room.humanCount() > best.humanCount()) best = room;
+      if (room.readyCount() >= MAX_PLAYERS) continue;
+      if (!best) { best = room; continue; }
+      if (room.readyCount() > best.readyCount() ||
+          (room.readyCount() === best.readyCount() && room.humanCount() > best.humanCount())) {
+        best = room;
       }
     }
     return best;
@@ -65,28 +70,24 @@ function createGameServer(server) {
     try {
       const url = new URL(req.url, 'http://localhost');
       name = sanitizeName(url.searchParams.get('name') || '');
-    } catch { /* keep empty -> room assigns a fallback name */ }
+    } catch { /* keep empty -> name arrives with the Play 'ready' message */ }
 
-    let room = pickRoomForHuman();
-    let founding = false;
+    let room = pickRoom();
     if (!room) {
       if (rooms.size < MAX_ROOMS) {
         room = createRoom();
-        founding = true;            // brand-new room: seat + start immediately
       } else {
-        // At room cap: drop them into the emptiest room as a spectator.
+        // At room cap: spectate the fullest room (they'll get a slot when one frees).
         for (const r of rooms.values()) {
-          if (!room || r.humanCount() < room.humanCount()) room = r;
+          if (!room || r.humanCount() > room.humanCount()) room = r;
         }
-        if (!room) { room = createRoom(); founding = true; }
+        if (!room) room = createRoom();
       }
-    } else if (room.humanCount() === 0) {
-      founding = true;              // claim an idle (bot-only) room for instant play
     }
 
     const p = new Player(manager.allocId(), ws);
-    p.name = name;                  // may be '' -> Room.addHuman fills a fallback
-    room.addHuman(p, founding);
+    if (name) p.name = name;        // usually empty; the real name comes with 'ready'
+    room.addHuman(p);
   }
 
   function tick() {

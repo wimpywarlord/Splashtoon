@@ -120,26 +120,12 @@ const cam = { boardX: 0, boardY: 0, boardW: 1280, boardH: 720, zoom: 1, dpr: 1, 
 let ws = null;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const params = myName ? `?name=${encodeURIComponent(myName)}` : '';
-  ws = new WebSocket(`${proto}://${location.host}/${params}`);
+  ws = new WebSocket(`${proto}://${location.host}/`);
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
-  // Reconnect only while in a match; leaving to the menu closes deliberately.
-  ws.onclose = () => { if (!inMenu) setTimeout(connect, 1000); };
-}
-
-function disconnect() {
-  inMenu = true;
-  if (ws) {
-    try { ws.onclose = null; ws.close(); } catch (_) { /* ignore */ }
-    ws = null;
-  }
-  remote.clear();
-  me.has = false;
-  spectating = true;
-  scores = [];
-  slotNames = {};
-  powerups = [];
-  if (GameAudio) GameAudio.movement(0);
+  // If we're mid-game when a reconnect lands, re-enter play; on the menu we stay
+  // a spectator (the background game).
+  ws.onopen = () => { if (!inMenu && myName) send({ t: 'ready', name: myName }); };
+  ws.onclose = () => { ws = null; setTimeout(connect, 1000); };
 }
 
 function send(obj) {
@@ -289,11 +275,16 @@ function applyPlayers(list, snap) {
 }
 
 // ---- Paint layer (soft, splashy splats decoupled from the scoring grid) -----
+// Supersample the paint layer so trails stay crisp when the board is scaled up
+// on large screens (the layer is PAINT_SS x world res; all paint ops use world
+// coords via the baked-in scale, and render() scales it back down to the board).
+const PAINT_SS = 2;
 function initPaintLayer() {
   paintLayer = document.createElement('canvas');
-  paintLayer.width = G.worldW;     // world resolution -> soft edges, no upscaling blocks
-  paintLayer.height = G.worldH;
+  paintLayer.width = G.worldW * PAINT_SS;
+  paintLayer.height = G.worldH * PAINT_SS;
   paintCtx = paintLayer.getContext('2d');
+  paintCtx.setTransform(PAINT_SS, 0, 0, PAINT_SS, 0, 0);   // draw in world coords at SS resolution
   paintCtx.imageSmoothingEnabled = true;
 }
 
@@ -755,38 +746,13 @@ function roundRectPath(c, x, y, w, h, r) {
   c.closePath();
 }
 
-function render() {
-  const dpr = cam.dpr, zoom = cam.zoom;
-  const dx = Math.round(cam.boardX * dpr), dy = Math.round(cam.boardY * dpr);
-  const dw = Math.round(cam.boardW * dpr), dh = Math.round(cam.boardH * dpr);
-  const R = 16 * dpr;
-  // world -> device transform for content drawn on the board
-  const worldTf = () => ctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, dx, dy);
-
-  // Matte (table) behind the platform.
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = ARENA_VOID;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Elevated-platform drop shadow (bottom-weighted) under the board.
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-  ctx.shadowBlur = 40 * dpr;
-  ctx.shadowOffsetY = 18 * dpr;
-  ctx.fillStyle = '#000';
-  roundRectPath(ctx, dx, dy, dw, dh, R);
-  ctx.fill();
-  ctx.restore();
-
-  // Board surface, clipped to the rounded rect: bg + paint + powerups + impacts.
-  ctx.save();
-  roundRectPath(ctx, dx, dy, dw, dh, R);
-  ctx.clip();
-  worldTf();
+// Board contents in WORLD coordinates (caller sets the world->device transform).
+function drawBoardContent() {
   ctx.fillStyle = ARENA_BG;
   ctx.fillRect(0, 0, G.worldW, G.worldH);
-  if (paintLayer) ctx.drawImage(paintLayer, 0, 0);
+  // paintLayer is supersampled (PAINT_SS x world res) for crisp trails on big
+  // screens; scale it down to world coords here.
+  if (paintLayer) ctx.drawImage(paintLayer, 0, 0, paintLayer.width, paintLayer.height, 0, 0, G.worldW, G.worldH);
   for (const pu of powerups) drawPowerup(pu);
   if (pickupFades.length) {
     for (const fx of pickupFades) drawPickupFade(fx);
@@ -804,17 +770,10 @@ function render() {
     }
     impacts = impacts.filter((im) => nowMs - im.start < 450);
   }
-  ctx.restore();   // drop clip + restore transform
+}
 
-  // Solid white border tracing the platform edge.
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.lineWidth = 3 * dpr;
-  ctx.strokeStyle = '#ffffff';
-  roundRectPath(ctx, dx, dy, dw, dh, R);
-  ctx.stroke();
-
-  // Brushes on TOP and UNCLIPPED: they lean over the platform edge, never cut.
-  worldTf();
+// Brushes, depth-sorted, drawn in WORLD coordinates.
+function drawActors() {
   const actors = [];
   for (const r of remote.values()) {
     actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, inputActive: r.inputActive, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, castType: r.castType });
@@ -824,6 +783,68 @@ function render() {
   }
   actors.sort((a, b) => a.y - b.y);
   for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.castType, a.inputActive);
+}
+
+function render() {
+  const dpr = cam.dpr;
+
+  // Landing page: the game is just a full-bleed BACKGROUND -- fill the viewport
+  // (cover), no platform / border / shadow / minimap.
+  if (inMenu) {
+    const z = Math.max(cam.cssW / G.worldW, cam.cssH / G.worldH);
+    const ox = (cam.cssW - G.worldW * z) / 2;
+    const oy = (cam.cssH - G.worldH * z) / 2;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = ARENA_BG;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
+    drawBoardContent();
+    drawActors();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return;
+  }
+
+  // In game: draw the arena as an elevated, rounded, white-bordered platform.
+  const zoom = cam.zoom;
+  const dx = Math.round(cam.boardX * dpr), dy = Math.round(cam.boardY * dpr);
+  const dw = Math.round(cam.boardW * dpr), dh = Math.round(cam.boardH * dpr);
+  const R = 16 * dpr;
+  const worldTf = () => ctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, dx, dy);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = ARENA_VOID;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Elevated drop shadow under the board.
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+  ctx.shadowBlur = 40 * dpr;
+  ctx.shadowOffsetY = 18 * dpr;
+  ctx.fillStyle = '#000';
+  roundRectPath(ctx, dx, dy, dw, dh, R);
+  ctx.fill();
+  ctx.restore();
+
+  // Board surface, clipped to the rounded rect.
+  ctx.save();
+  roundRectPath(ctx, dx, dy, dw, dh, R);
+  ctx.clip();
+  worldTf();
+  drawBoardContent();
+  ctx.restore();
+
+  // White rounded border.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.lineWidth = 3 * dpr;
+  ctx.strokeStyle = '#ffffff';
+  roundRectPath(ctx, dx, dy, dw, dh, R);
+  ctx.stroke();
+
+  // Brushes on top, UNCLIPPED, so they lean over the platform edge.
+  worldTf();
+  drawActors();
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawMinimap();
@@ -874,7 +895,7 @@ function updateHUD() {
   // One-shot countdown ticks in the final 10 seconds (driven by the displayed
   // clock so they're smooth between the 30Hz state updates).
   const secs = Math.ceil(timeLeftMs / 1000);
-  if (phase === 'active' && secs >= 1 && secs <= 10) {
+  if (!inMenu && phase === 'active' && secs >= 1 && secs <= 10) {
     if (secs !== lastTickSecond) { lastTickSecond = secs; if (GameAudio) GameAudio.tick(secs); }
   } else if (phase !== 'active') {
     lastTickSecond = -1;
@@ -901,7 +922,7 @@ function updateHUD() {
 }
 
 function refreshOverlays() {
-  if (phase === 'active' && spectating) show(els.spectate);
+  if (!inMenu && phase === 'active' && spectating) show(els.spectate);
   else hide(els.spectate);
 }
 
@@ -1064,6 +1085,9 @@ function toggleSound() {
   syncSoundUI();
 }
 
+// Hide the in-game HUD on the menu so the background is a clean attract-mode game.
+function setHudVisible(v) { if (els.hud) els.hud.style.display = v ? '' : 'none'; }
+
 function initMenu() {
   inMenu = true;
   if (Store && els.nameInput) {
@@ -1072,9 +1096,11 @@ function initMenu() {
   }
   renderStats();
   syncSoundUI();
+  setHudVisible(false);
   show(els.start);
   hide(els.spectate);
   hide(els.results);
+  if (!ws) connect();   // open the spectator connection -> live bot game behind the menu
   setTimeout(() => { if (els.nameInput) els.nameInput.focus(); }, 60);
 }
 
@@ -1083,14 +1109,24 @@ function startPlay() {
   if (Store) Store.setName(myName);
   inMenu = false;
   if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture
+  setHudVisible(true);
   hide(els.start);
-  connect();
+  send({ t: 'ready', name: myName });   // already connected as a spectator -> enter the game
+}
+
+function leaveToMenu() {
+  inMenu = true;
+  send({ t: 'unready' });               // back to spectating; stay connected for the background
+  me.has = false;
+  spectating = true;
+  if (GameAudio) GameAudio.movement(0);
+  initMenu();
 }
 
 if (els.startForm) els.startForm.addEventListener('submit', (e) => { e.preventDefault(); startPlay(); });
 if (els.muteBtn) els.muteBtn.addEventListener('click', toggleSound);
 if (els.soundToggle) els.soundToggle.addEventListener('click', toggleSound);
-if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', () => { disconnect(); initMenu(); });
+if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', leaveToMenu);
 
 // ---- Boot -------------------------------------------------------------------
 resize();

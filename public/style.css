@@ -408,7 +408,13 @@ html, body {
 .link-btn:hover { color: var(--st-fg); }
 
 /* ---- Start screen --------------------------------------------------------- */
-#start { z-index: 7; }
+/* Light backdrop so the live bot game plays visibly behind the menu card. */
+#start {
+  z-index: 7;
+  background: rgba(8, 9, 13, 0.34);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
 .start-card {
   width: min(380px, calc(100% - 36px));
   padding: 32px 30px 22px;
