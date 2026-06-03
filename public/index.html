@@ -106,25 +106,28 @@
          on it. Shown via body.in-menu; hidden in a match. -->
     <nav id="bottom-nav" aria-label="Menu">
       <div class="nav-left">
-        <div class="logo">Battle <span>Painters</span></div>
-        <div id="stats" class="stats"></div>
+        <div class="brand">
+          <img class="brand-mark" src="/assets/logo-brush-spirit.png" alt="" aria-hidden="true" width="44" height="44" decoding="async" />
+          <div class="logo">Battle <span>Painters</span></div>
+        </div>
+        <!-- Stats pill relocated out of the bar; re-add <div id="stats" class="stats"></div>
+             wherever it should live (renderStats() targets #stats; .stats styles are portable). -->
       </div>
       <form id="start-form" class="start-form" autocomplete="off">
         <input id="name-input" class="input" type="text" maxlength="16" placeholder="Enter name (optional)" spellcheck="false" aria-label="Player name" />
-        <button id="play-btn" class="btn btn-primary nav-btn" type="submit">
+        <button id="play-btn" class="btn btn-primary play-btn" type="submit">
           <svg class="nav-icon nav-icon-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5.2v13.6L18.6 12 8 5.2z"></path></svg>
           <span>Play</span>
         </button>
       </form>
       <div class="nav-actions">
-        <button id="nav-settings" class="nav-btn" type="button" aria-haspopup="true" aria-expanded="false">
-          <svg class="nav-icon nav-icon-gear" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 7 4.4l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5h.1a1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.1a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"></path></svg>
-          <span>Settings</span>
-        </button>
         <a class="nav-btn nav-link" href="https://x.com/type_kshitij" target="_blank" rel="noopener">
           <svg class="nav-icon nav-icon-x" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M14.6 10.4 22 2h-1.8l-6.4 7.3L8.6 2H2.7l7.8 11.1L2.7 22h1.8l6.8-7.7 5.5 7.7h5.9l-8.1-11.6zm-2.4 2.7-.8-1.1L5.1 3.3h2.6l5.1 7.1.8 1.1 6.6 9.2h-2.6l-5.4-7.6z"></path></svg>
           <span>@type_kshitij</span>
         </a>
+        <button id="nav-settings" class="nav-btn nav-icon-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Settings">
+          <svg class="nav-icon nav-icon-gear" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 7 4.4l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5h.1a1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.1a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"></path></svg>
+        </button>
       </div>
     </nav>
 

@@ -286,7 +286,11 @@ html, body {
   --st-primary-hover: #ff7e57;
   --st-primary-fg: #ffffff;
   --st-ring: rgba(255, 122, 79, 0.55);
+  --st-secondary: rgba(255, 255, 255, 0.055);
+  --st-secondary-hover: rgba(255, 255, 255, 0.10);
   --st-radius: 12px;
+  --st-radius-ctl: 10px;
+  --st-control-h: 40px;
   --st-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
@@ -434,11 +438,13 @@ html, body {
 .input:focus-visible,
 .icon-btn:focus-visible,
 .nav-btn:focus-visible,
+.play-btn:focus-visible,
 .link-btn:focus-visible {
   outline: none;
   border-color: var(--st-primary);
-  box-shadow: 0 0 0 3px var(--st-ring);
+  box-shadow: 0 0 0 2px var(--st-ring);
 }
+.start-form .input:focus-visible { border-color: var(--st-primary); }
 
 /* Icon button (HUD mute) */
 /* Settings gear in the top bar (Mac-toolbar style) */
@@ -479,8 +485,9 @@ html, body {
 body.in-menu #game { display: none; }
 
 /* Landing-only bottom bar (toggled by body.in-menu from setNavVisible): brand +
-   stats on the left, name/Play + menu on the right. A stronger bottom gradient since
-   it now carries the primary controls; wraps gracefully on narrow screens. */
+   stats on the left, name/Play + utility actions on the right. shadcn-style
+   toolbar -- every control shares one height + radius, fills are flat "secondary"
+   surfaces, and the only saturated element is Play. Wraps on narrow screens. */
 #bottom-nav {
   position: absolute;
   left: 0; right: 0; bottom: 0;
@@ -488,121 +495,184 @@ body.in-menu #game { display: none; }
   display: none;
   align-items: center;
   flex-wrap: wrap;
-  gap: 14px 18px;
-  min-height: 78px;
-  padding: 18px 20px;
-  padding-bottom: max(18px, env(safe-area-inset-bottom));
-  background: linear-gradient(0deg, rgba(8, 9, 13, 0.94) 0%, rgba(8, 9, 13, 0.78) 58%, rgba(8, 9, 13, 0) 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 -18px 40px rgba(0, 0, 0, 0.22);
+  gap: 12px 14px;
+  padding: 16px 20px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(8, 9, 13, 0.96) 0%, rgba(8, 9, 13, 0.74) 62%, rgba(8, 9, 13, 0) 100%);
   pointer-events: none;          /* gaps pass through to the game; children re-enable */
 }
 body.in-menu #bottom-nav { display: flex; }
 #bottom-nav > * { pointer-events: auto; }
-.nav-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.nav-actions { display: flex; align-items: center; gap: 10px; }
+.nav-left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.nav-actions { display: flex; align-items: center; gap: 8px; }
+
+/* Secondary control surface shared by the X link + settings gear. */
 .nav-btn {
   appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  width: 152px;
-  min-height: 46px;
-  background: rgba(20, 22, 30, 0.58);
+  height: var(--st-control-h);
+  width: auto;
+  padding: 0 14px;
+  background: var(--st-secondary);
   border: 1px solid var(--st-border);
   color: var(--st-fg);
   font: inherit;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   line-height: 1;
-  padding: 0 18px 0 15px;
-  border-radius: 12px;
+  border-radius: var(--st-radius-ctl);
   cursor: pointer;
   text-decoration: none;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 12px 26px -18px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, transform 0.06s ease;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.06s ease;
 }
-.nav-btn:hover { background: rgba(40, 44, 56, 0.74); border-color: var(--st-border-strong); box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.12); }
-.nav-btn:active { transform: scale(0.96); }
+.nav-btn:hover { background: var(--st-secondary-hover); border-color: var(--st-border-strong); }
+.nav-btn:active { transform: scale(0.97); }
+/* Icon-only square (settings gear) -- the rightmost action, so the popover anchors over it. */
+.nav-icon-btn { width: var(--st-control-h); padding: 0; flex: none; color: var(--st-muted-fg); }
+.nav-icon-btn:hover { color: var(--st-fg); }
+.nav-icon-btn[aria-expanded="true"] { background: var(--st-secondary-hover); border-color: var(--st-border-strong); color: var(--st-fg); }
+/* Social link -- lowest emphasis (muted until hover). Left padding shaved so the
+   leading X glyph sits optically centered against the handle. */
+.nav-link { color: var(--st-muted-fg); font-weight: 500; padding: 0 14px 0 10px; }
+.nav-link:hover { color: var(--st-fg); }
 .nav-icon {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   flex: none;
-  opacity: 0.92;
+  opacity: 0.95;
   transform-box: fill-box;
   transform-origin: center;
 }
 .nav-icon-play { transform: translateX(1px); }
-.nav-icon-gear { transform: translateX(-0.5px); }
 .nav-icon-x { transform: translateX(-0.5px); }
 .nav-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Settings panel re-anchors above the nav on the landing (already a non-blocking
-   positioned panel, so it floats over the demo without dimming it). */
-body.in-menu #settings-menu { top: auto; bottom: calc(82px + env(safe-area-inset-bottom)); right: 20px; left: auto; z-index: 8; }
-/* Compact brand wordmark, sitting in the bar. */
+/* Settings popover re-anchors directly above the gear on the landing. The gear is
+   the rightmost action, so matching the bar's right padding (20px) lines the
+   popover's right edge up with it; the bottom offset clears the control row. */
+body.in-menu #settings-menu {
+  top: auto;
+  bottom: calc(var(--st-control-h) + 28px + env(safe-area-inset-bottom));
+  right: 20px;
+  left: auto;
+  z-index: 8;
+}
+/* Brand lockup: expressive brush mascot + wordmark. The mascot carries the paint
+   color (orange handle / magenta bristles); the wordmark stays clean -- flat
+   foreground + primary accent, no gradient. */
+.brand { display: inline-flex; align-items: center; gap: 0; }
+.brand-mark {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  object-fit: contain;
+  margin-top: -3px;          /* optical: lift the brush so its mass sits on the text */
+  margin-right: -7px;        /* the PNG carries ~12px of transparent padding; cancel most of it so the brush hugs the wordmark */
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 16px rgba(255, 106, 61, 0.28));
+}
 .logo {
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.03em;
   line-height: 1;
   white-space: nowrap;
-  background: linear-gradient(180deg, #ffffff, #ffd9c9 70%, #ff8a5c);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--st-fg);
 }
-.logo span { color: var(--st-primary); -webkit-text-fill-color: var(--st-primary); }
+.logo span { color: var(--st-primary); }
 
 /* Name + Play: the primary action, pushed to the right edge of the bar. */
-.start-form { display: flex; flex-direction: row; align-items: center; gap: 10px; margin-left: auto; }
+.start-form { display: flex; flex-direction: row; align-items: center; gap: 8px; margin-left: auto; }
 .start-form .input {
-  width: min(280px, 42vw);
-  min-height: 46px;
-  padding: 0 16px;
+  width: min(260px, 38vw);
+  height: var(--st-control-h);
+  min-height: 0;
+  padding: 0 14px;
   text-align: left;
-  font-size: 16px;
-  font-weight: 600;
-  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: var(--st-radius-ctl);
+  background: var(--st-secondary);
+  border: 1px solid var(--st-border);
 }
-.start-form .btn-primary {
+.start-form .input::placeholder { color: var(--st-muted-fg); }
+.play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--st-control-h);
+  min-height: 0;
+  width: auto;
+  padding: 0 18px 0 14px;   /* optical: shave the icon (left) side so ▶ + label reads centered */
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--st-radius-ctl);
+  border-color: transparent;
   background: var(--st-primary);
   color: var(--st-primary-fg);
-  padding: 0 18px;
-  font-size: 15px;
-  border-color: transparent;
-  box-shadow: 0 14px 30px -14px var(--st-ring), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
-.start-form .btn-primary:hover {
+.play-btn:hover {
   background: var(--st-primary-hover);
-  box-shadow: 0 16px 34px -14px var(--st-ring), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 10px -2px var(--st-ring), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
-/* Stats as badge pills, matching the nav buttons. */
-.stats { display: flex; align-items: center; gap: 10px; margin: 0; flex-wrap: wrap; }
-.stats:empty { display: none; }
-#bottom-nav .stat {
+/* Stats as one connected strip (clearly not buttons): value over a tiny label,
+   centered per cell. A faint top-lit gradient gives the pill depth, and cells are
+   split by inset hairlines that fade out top + bottom (lighter than full rules).
+   Same height/radius as the controls so it sits flush in the toolbar. */
+.stats {
   display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  flex: none;
-  background: rgba(20, 22, 30, 0.58);
+  align-items: stretch;
+  height: var(--st-control-h);
+  margin: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.018));
   border: 1px solid var(--st-border);
   border-radius: 12px;
-  min-height: 44px;
-  padding: 0 16px;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.stats:empty { display: none; }
+.stats .stat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 19px;
+  background: none;
+  border: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* Inset, top/bottom-faded divider between cells (sits on the leading edge). */
+.stats .stat + .stat::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--st-border-strong) 28%, var(--st-border-strong) 72%, transparent);
 }
 .tabular-nums {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
-.stat-value { font-size: 16px; font-weight: 800; color: var(--st-fg); }
-.stat-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--st-muted-fg); }
+.stat-value { font-size: 17px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; color: var(--st-fg); }
+.stat-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: color-mix(in srgb, var(--st-muted-fg) 85%, transparent);
+}
 
 /* Results tweaks */
 #result-title.big { font-size: 34px; }
