@@ -596,6 +596,15 @@ class Room {
     };
   }
 
+  // Same payload as round start, re-tagged so the client rehydrates the paint
+  // layer WITHOUT the round-reset side effects. Served on demand to a client whose
+  // render loop resumed after a stall and missed the paint laid down while paused.
+  paintSyncMsg() {
+    const m = this.roundStartMsg();
+    m.t = 'paintsync';
+    return m;
+  }
+
   // ---- messaging (bots have no socket -> never sent to) ----------------------
   send(ws, obj) {
     if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -664,6 +673,14 @@ class Room {
       } else if (msg.t === 'rename') {
         const nm = sanitizeName(msg.name);
         if (nm) p.name = nm;
+      } else if (msg.t === 'resync') {
+        // Client's render loop resumed after a stall and lost the paint laid down
+        // while it was paused. Replay the authoritative visual log. Throttled per
+        // player so a wedged client can't spam the (round-sized) payload.
+        const t = now();
+        if (t - (p.lastResyncAt || 0) < 500) return;
+        p.lastResyncAt = t;
+        this.send(p.ws, this.paintSyncMsg());
       }
     });
 

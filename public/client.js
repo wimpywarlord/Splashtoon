@@ -148,6 +148,20 @@ function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
 
+// A paused/stalled render loop stops local paint accumulation: paintTrails() runs
+// only inside the rAF frame, so paint laid down while the loop wasn't ticking is
+// lost and can't be rebuilt from the 30Hz position stream. Ask the server to
+// replay its authoritative visual paint log -- the same data a join-in-progress
+// gets. Deduped so a burst of triggers can't spam the request.
+let lastResyncAt = -Infinity;
+function requestResync() {
+  if (inMenu || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const t = performance.now();
+  if (t - lastResyncAt < 500) return;
+  lastResyncAt = t;
+  send({ t: 'resync' });
+}
+
 function handle(msg) {
   switch (msg.t) {
     case 'init': {
@@ -189,6 +203,21 @@ function handle(msg) {
       // Visual paint is drawn locally as smooth strokes (see paintTrails);
       // server deltas are ignored for rendering. Scores stay authoritative.
       applyPlayers(msg.players, false);
+      refreshOverlays();
+      break;
+    }
+    case 'paintsync': {
+      // Authoritative paint replay, requested when our render loop resumes after a
+      // stall (backgrounded/minimized/slept tab). Rehydrate the board exactly like
+      // a join-in-progress. Kept separate from 'roundstart' so it carries none of
+      // the round-reset side effects (spawn sound, results toggle, tick reset).
+      phase = msg.phase;
+      timeLeftMs = msg.timeLeftMs;
+      scores = msg.scores;
+      powerups = msg.powerups || [];
+      applySnapshot(msg.cells, msg.paintEvents || []);
+      applyPlayers(msg.players, true);   // snap render+target to the authoritative now
+      resetTrailAnchors();               // re-seed anchors so no catch-up smear is drawn
       refreshOverlays();
       break;
     }
@@ -1056,13 +1085,20 @@ function hide(el) { el.classList.add('hidden'); }
 
 // ---- Loop -------------------------------------------------------------------
 let lastFrame = performance.now();
+// A frame gap this large means the loop was paused (hidden/minimized/slept tab) or
+// badly stalled -- past it, strokeSeg's 90px teleport guard (~390ms at top speed)
+// would drop the catch-up stroke, so the missed window is gone. Detecting the gap
+// directly catches every stall cause uniformly without relying on visibility events.
+const RESYNC_STALL_MS = 300;
 function frame(t) {
-  const dt = Math.min(0.05, (t - lastFrame) / 1000);
+  const gap = t - lastFrame;
+  const dt = Math.min(0.05, gap / 1000);
   lastFrame = t;
   nowMs = t;
   if (inMenu) {
     bgSim.update(dt);   // local attract-mode sim (no server)
   } else {
+    if (gap > RESYNC_STALL_MS) requestResync();   // loop resumed after a stall -> catch up paint
     predict(dt);
     interpolateRemotes();
     paintTrails();      // accumulate smooth paint onto the persistent layer
