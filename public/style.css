@@ -277,19 +277,38 @@ html, body {
 #timer.urgent { color: #ff5a6e; }
 
 /* HUD scoreboard card */
+/* Compact standings strip: sits in the TOP MATTE (above the board) so it never
+   covers the canvas. Shows the leader (crowned) + runner-up [+ you]. */
 #scoreboard {
-  top: 14px;
-  right: 14px;
-  gap: 7px;
-  padding: 12px 13px;
-  background: rgba(12, 13, 18, 0.4);          /* mostly transparent; blur keeps it legible */
+  top: -36px;            /* in the matte, above the board's top edge */
+  right: 4px;
+  left: auto;
+  bottom: auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  padding: 4px 8px;
+  background: rgba(12, 13, 18, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--st-radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  min-width: 184px;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
+.lb-item { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 13px; line-height: 1; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7); }
+.lb-item.me { font-weight: 700; }
+.lb-crown { width: 15px; height: 15px; object-fit: contain; flex: none; }
+.lb-rank { color: var(--st-muted-fg); font-size: 11px; font-weight: 700; min-width: 13px; text-align: center; }
+.lb-rank.you { color: var(--st-primary); }
+.lb-name { color: var(--st-fg); max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+.lb-pct { color: var(--st-fg); font-weight: 700; }
+.lb-sep { width: 1px; align-self: stretch; background: rgba(255, 255, 255, 0.12); margin: 3px 1px; }
+.lb-item .swatch { width: 11px; height: 11px; }
+
+/* Results panel rows (full standings at round end) */
 .score-row { font-size: 13.5px; letter-spacing: 0.2px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85); }
 .score-name { color: var(--st-muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 116px; }
 .score-row.me .score-name { color: var(--st-fg); }

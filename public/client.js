@@ -945,24 +945,36 @@ function updateHUD() {
     lastTickSecond = -1;
   }
 
+  // Compact standings: only what matters in a 1-winner game -- the leader
+  // (crowned) and the runner-up, plus your own standing if you're further down.
   const total = G.w * G.h;
-  const rows = [];
+  const ranked = [];
   for (let s = 0; s < scores.length; s++) {
     const occupied = mySlot === s || [...remote.values()].some((r) => r.slot === s);
-    if (scores[s] > 0 || occupied) rows.push({ slot: s, score: scores[s] });
+    if (scores[s] > 0 || occupied) ranked.push({ slot: s, score: scores[s] });
   }
-  rows.sort((a, b) => b.score - a.score);
+  ranked.sort((a, b) => b.score - a.score);
 
-  els.scoreboard.innerHTML = rows.map((row) => {
-    const pct = ((row.score / total) * 100).toFixed(1);
-    const meCls = row.slot === mySlot && !spectating ? ' me' : '';
-    const name = slotNames[row.slot] || `P${row.slot + 1}`;
-    return `<div class="score-row${meCls}">
-      <span class="swatch" style="background:${palette[row.slot]}"></span>
-      <span class="score-name">${escapeHtml(name)}</span>
-      <span class="score-pct">${pct}%</span>
+  const items = [];
+  if (ranked[0]) items.push({ ...ranked[0], rank: 1, crown: true });
+  if (ranked[1]) items.push({ ...ranked[1], rank: 2 });
+  const myRank = (!spectating && mySlot >= 0) ? ranked.findIndex((r) => r.slot === mySlot) : -1;
+  if (myRank >= 2) items.push({ ...ranked[myRank], rank: myRank + 1, you: true });
+
+  els.scoreboard.innerHTML = items.map((it) => {
+    const pct = ((it.score / total) * 100).toFixed(1);
+    const isMe = it.slot === mySlot && !spectating;
+    const name = it.you ? 'You' : (slotNames[it.slot] || `P${it.slot + 1}`);
+    const badge = it.crown
+      ? '<img class="lb-crown" src="/assets/crown.png" alt="leader">'
+      : `<span class="lb-rank${it.you ? ' you' : ''}">${it.rank}</span>`;
+    return `<div class="lb-item${isMe ? ' me' : ''}">
+      ${badge}
+      <span class="swatch" style="background:${palette[it.slot]}"></span>
+      <span class="lb-name">${escapeHtml(name)}</span>
+      <span class="lb-pct">${pct}%</span>
     </div>`;
-  }).join('');
+  }).join('<span class="lb-sep"></span>');
 }
 
 function refreshOverlays() {
