@@ -74,9 +74,12 @@ const Store = window.SplashtoonStore;
 
 // ---- World / game state -----------------------------------------------------
 const G = {
-  w: 120, h: 75, cell: 10,
-  worldW: 1200, worldH: 750,
+  w: 128, h: 72, cell: 10,        // 16:9 arena (matches the server); the local
+  worldW: 1280, worldH: 720,      // attract-mode sim uses this before any connect
 };
+// Default team colors so the local landing-page sim can render before the server
+// sends the real palette on connect (these mirror the server config).
+const DEFAULT_PALETTE = ['#ff4d6d', '#4dd2ff', '#ffd23f', '#7c4dff', '#3ddc84', '#ff8c42', '#ff6fd8', '#5b8cff'];
 let palette = [];
 let paletteRGB = [];
 
@@ -120,12 +123,21 @@ const cam = { boardX: 0, boardY: 0, boardW: 1280, boardH: 720, zoom: 1, dpr: 1, 
 let ws = null;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/`);
+  const params = myName ? `?name=${encodeURIComponent(myName)}` : '';
+  ws = new WebSocket(`${proto}://${location.host}/${params}`);
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
-  // If we're mid-game when a reconnect lands, re-enter play; on the menu we stay
-  // a spectator (the background game).
-  ws.onopen = () => { if (!inMenu && myName) send({ t: 'ready', name: myName }); };
-  ws.onclose = () => { ws = null; setTimeout(connect, 1000); };
+  // Reconnect only while in a match; the menu has no connection at all.
+  ws.onclose = () => { ws = null; if (!inMenu) setTimeout(connect, 1000); };
+}
+
+function disconnect() {
+  if (ws) { try { ws.onclose = null; ws.close(); } catch (_) { /* ignore */ } ws = null; }
+  remote.clear();
+  me.has = false;
+  spectating = true;
+  scores = [];
+  slotNames = {};
+  powerups = [];
 }
 
 function send(obj) {
@@ -799,8 +811,10 @@ function render() {
     ctx.fillStyle = ARENA_BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
-    drawBoardContent();
-    drawActors();
+    ctx.fillStyle = ARENA_BG;
+    ctx.fillRect(0, 0, G.worldW, G.worldH);
+    if (paintLayer) ctx.drawImage(paintLayer, 0, 0, paintLayer.width, paintLayer.height, 0, 0, G.worldW, G.worldH);
+    bgSim.drawBrushes();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -879,6 +893,60 @@ function drawMinimap() {
   for (const r of remote.values()) drawMiniDot(g, r.rx, r.ry, palette[r.slot], sx, sy, otherR, false);
   if (me.has && !spectating) drawMiniDot(g, me.x, me.y, palette[mySlot], sx, sy, meR, true);
 }
+
+// ---- Landing-page background: a purely LOCAL sim (no server) -----------------
+// A handful of wandering brushes painting trails, so the menu has a live game
+// behind it without any connection. Reuses the real paint layer + brush sprites.
+const bgSim = {
+  agents: [],
+  init() {
+    if (!palette.length) { palette = DEFAULT_PALETTE.slice(); paletteRGB = palette.map(hexToRGB); }
+    initPaintLayer();   // fresh, world-sized (cleared)
+    this.agents = [];
+    const n = Math.min(8, palette.length);
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      this.agents.push({
+        x: BRUSH_R + Math.random() * (G.worldW - 2 * BRUSH_R),
+        y: BRUSH_R + Math.random() * (G.worldH - 2 * BRUSH_R),
+        slot: i,
+        dirAngle: ang,
+        face: Math.cos(ang) < 0 ? -1 : 1,
+        baseSpeed: MAX_SPEED * (0.7 + Math.random() * 0.25),
+        speed: 0,
+        wanderPhase: Math.random() * Math.PI * 2,
+        wanderFreq: 0.5 + Math.random() * 0.8,
+        turnRate: 1.4 + Math.random() * 1.7,
+        lastPaintX: undefined,
+        lastPaintY: undefined,
+      });
+    }
+  },
+  update(dt) {
+    if (!this.agents.length) this.init();
+    const W = G.worldW, H = G.worldH;
+    for (const a of this.agents) {
+      a.wanderPhase += dt * a.wanderFreq;
+      a.dirAngle += Math.sin(a.wanderPhase) * a.turnRate * dt;
+      a.x += Math.cos(a.dirAngle) * a.baseSpeed * dt;
+      a.y += Math.sin(a.dirAngle) * a.baseSpeed * dt;
+      if (a.x < BRUSH_R) { a.x = BRUSH_R; a.dirAngle = Math.PI - a.dirAngle; }
+      else if (a.x > W - BRUSH_R) { a.x = W - BRUSH_R; a.dirAngle = Math.PI - a.dirAngle; }
+      if (a.y < BRUSH_R) { a.y = BRUSH_R; a.dirAngle = -a.dirAngle; }
+      else if (a.y > H - BRUSH_R) { a.y = H - BRUSH_R; a.dirAngle = -a.dirAngle; }
+      const c = Math.cos(a.dirAngle);
+      if (c < -0.05) a.face = -1; else if (c > 0.05) a.face = 1;
+      a.speed = a.baseSpeed;
+      strokeSeg(a, a.slot, a.x, a.y);   // paint the trail onto the persistent layer
+    }
+  },
+  drawBrushes() {
+    const list = this.agents.slice().sort((p, q) => p.y - q.y);
+    for (const a of list) {
+      drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, false, false, false, false, null, true);
+    }
+  },
+};
 
 // ---- HUD --------------------------------------------------------------------
 function fmtTime(ms) {
@@ -977,9 +1045,13 @@ function frame(t) {
   const dt = Math.min(0.05, (t - lastFrame) / 1000);
   lastFrame = t;
   nowMs = t;
-  predict(dt);
-  interpolateRemotes();
-  paintTrails();   // accumulate smooth paint onto the persistent layer
+  if (inMenu) {
+    bgSim.update(dt);   // local attract-mode sim (no server)
+  } else {
+    predict(dt);
+    interpolateRemotes();
+    paintTrails();      // accumulate smooth paint onto the persistent layer
+  }
   render();
   updateHUD();
   if (GameAudio && !inMenu) {
@@ -1100,7 +1172,7 @@ function initMenu() {
   show(els.start);
   hide(els.spectate);
   hide(els.results);
-  if (!ws) connect();   // open the spectator connection -> live bot game behind the menu
+  bgSim.init();         // local attract-mode game behind the menu (NO connection)
   setTimeout(() => { if (els.nameInput) els.nameInput.focus(); }, 60);
 }
 
@@ -1111,14 +1183,11 @@ function startPlay() {
   if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture
   setHudVisible(true);
   hide(els.start);
-  send({ t: 'ready', name: myName });   // already connected as a spectator -> enter the game
+  connect();            // open the connection only now
 }
 
 function leaveToMenu() {
-  inMenu = true;
-  send({ t: 'unready' });               // back to spectating; stay connected for the background
-  me.has = false;
-  spectating = true;
+  disconnect();         // drop the match; the menu is a purely local sim again
   if (GameAudio) GameAudio.movement(0);
   initMenu();
 }

@@ -6,7 +6,6 @@ class Player {
     this.ws = ws || null;   // null for bots (no socket -> never broadcast to)
     this.name = '';         // display name (human-chosen or bot name pool)
     this.isBot = false;     // SERVER-ONLY: must never be serialized to clients
-    this.ready = false;     // SERVER-ONLY: human has clicked Play (vs just watching)
     this.ai = null;         // bot steering/personality state (see bot-ai.js)
     this.slot = -1;
     this.x = 0;

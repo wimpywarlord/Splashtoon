@@ -127,14 +127,6 @@ class Room {
     return n;
   }
 
-  // Humans who have clicked Play. Only these reserve slots / get seated; everyone
-  // else is a spectator watching the background game on the landing page.
-  readyCount() {
-    let n = 0;
-    for (const p of this.players.values()) if (!p.isBot && p.ready) n++;
-    return n;
-  }
-
   freeSlots() {
     const used = new Set();
     for (const p of this.players.values()) if (p.slot >= 0) used.add(p.slot);
@@ -152,7 +144,7 @@ class Room {
   // Add/remove bots so (humans + bots) == MAX_PLAYERS. Called at round start so
   // a joining human's slot is freed by a bot exactly at the clean boundary.
   maintainPopulation() {
-    const humans = this.readyCount();   // only ready humans take slots
+    const humans = this.humanCount();
     const bots = [];
     for (const p of this.players.values()) if (p.isBot) bots.push(p);
     const botsNeeded = Math.max(0, MAX_PLAYERS - humans);
@@ -201,12 +193,8 @@ class Room {
     const free = this.freeSlots();
     if (!free.length) return;
     const waiting = [];
-    for (const p of this.players.values()) {
-      if (p.slot >= 0) continue;
-      if (!p.isBot && !p.ready) continue;   // non-ready humans keep spectating
-      waiting.push(p);
-    }
-    waiting.sort((a, b) => (a.isBot ? 1 : 0) - (b.isBot ? 1 : 0));   // ready humans first
+    for (const p of this.players.values()) if (p.slot < 0) waiting.push(p);
+    waiting.sort((a, b) => (a.isBot ? 1 : 0) - (b.isBot ? 1 : 0));   // humans first
     for (const p of waiting) {
       if (!free.length) break;
       this.assignSlot(p, free.shift());
@@ -645,15 +633,24 @@ class Room {
   }
 
   // ---- connection (humans only) ---------------------------------------------
-  // A human joins as a SPECTATOR and watches the running bot game (this is the
-  // landing-page background). They only enter the game when they click Play,
-  // which sends 'ready' (see setReady).
-  addHuman(p) {
+  // founding: this room was just created/claimed for this human -> seat them and
+  // start a fresh round immediately (instant play). Otherwise they spectate the
+  // current round and spawn next round (a bot yields a slot at the boundary).
+  addHuman(p, founding) {
     this.players.set(p.id, p);
     this.emptyAt = 0;
+    if (!p.name) {
+      const taken = new Set();
+      for (const o of this.players.values()) if (o.name) taken.add(o.name);
+      p.name = pickName(taken);
+    }
     const ws = p.ws;
     this.send(ws, this.initMsg(p));
-    this.send(ws, this.roundStartMsg());   // snapshot of the live game to render behind the menu
+    if (founding) {
+      this.startRound();                    // broadcast reaches this human
+    } else {
+      this.send(ws, this.roundStartMsg());  // live snapshot; promoted next round
+    }
 
     ws.on('message', (raw) => {
       let msg;
@@ -664,10 +661,6 @@ class Room {
           p.mx = msg.mx;
           p.my = msg.my;
         }
-      } else if (msg.t === 'ready') {
-        this.setReady(p, msg.name);
-      } else if (msg.t === 'unready') {
-        this.setUnready(p);
       } else if (msg.t === 'rename') {
         const nm = sanitizeName(msg.name);
         if (nm) p.name = nm;
@@ -676,32 +669,6 @@ class Room {
 
     ws.on('close', () => { this.removeHuman(p.id); });
     ws.on('error', () => {});
-  }
-
-  // Player clicked Play. Give them a name, mark them ready, and get them in: if
-  // nobody else is actively playing (all slotted are bots) start a fresh round
-  // now for instant play; otherwise they spawn at the next round boundary.
-  setReady(p, rawName) {
-    const nm = sanitizeName(rawName);
-    if (nm) p.name = nm;
-    if (!p.name) {
-      const taken = new Set();
-      for (const o of this.players.values()) if (o.name) taken.add(o.name);
-      p.name = pickName(taken);
-    }
-    p.ready = true;
-    let otherActiveHuman = false;
-    for (const o of this.players.values()) {
-      if (o !== p && !o.isBot && o.slot >= 0) { otherActiveHuman = true; break; }
-    }
-    if (!otherActiveHuman) this.startRound();
-  }
-
-  // Player returned to the menu: back to spectating (a bot reclaims their slot at
-  // the next round; vacate it now so they stop painting immediately).
-  setUnready(p) {
-    p.ready = false;
-    if (p.slot >= 0) p.slot = -1;
   }
 
   removeHuman(id) {
