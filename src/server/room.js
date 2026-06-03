@@ -29,6 +29,7 @@ const {
   MIN_PAINT_MOVE2,
   ROUND_MS,
   INTERMISSION_MS,
+  COUNTDOWN_MS,
   POWERUP_EFFECT_MS,
   POWERUP_MAX,
   POWERUP_SPAWN_MS,
@@ -155,6 +156,7 @@ class Room {
     this.changed = new Set();
     this.phase = 'intermission';   // becomes 'active' on the first startRound()
     this.phaseEndsAt = 0;
+    this.roundId = 0;
     this.lastWinnerSlot = -1;
     this.powerups = [];
     this.nextPowerupId = 1;
@@ -736,6 +738,7 @@ class Room {
   // ---- round lifecycle ------------------------------------------------------
   startRound() {
     this.removeAllEchoes();
+    this.roundId += 1;
     this.grid.fill(EMPTY);
     this.scores.fill(0);
     this.changed.clear();
@@ -750,8 +753,10 @@ class Room {
     for (const p of this.players.values()) {
       if (p.slot >= 0) this.placeAtSpawn(p);
     }
-    this.phase = 'active';
-    this.phaseEndsAt = now() + ROUND_MS;
+    // Start frozen: a 3-2-1 countdown runs before paint is live (see tick()), so
+    // every player -- founding human, late joiner, or bot -- is released together.
+    this.phase = 'countdown';
+    this.phaseEndsAt = now() + COUNTDOWN_MS;
     this.broadcast(this.roundStartMsg());
   }
 
@@ -780,6 +785,7 @@ class Room {
     this.phaseEndsAt = now() + INTERMISSION_MS;
     this.broadcast({
       t: 'roundover',
+      roundId: this.roundId,
       scores: this.scoreArray(),
       winnerSlot: this.lastWinnerSlot,
       winnerName,
@@ -792,7 +798,15 @@ class Room {
   // discrete events (impact/pickup/roundstart/roundover) always fire.
   tick(dt, doBroadcast) {
     const t = now();
-    if (this.phase === 'active') {
+    if (this.phase === 'countdown') {
+      // Pre-round freeze: no stepping/painting during the 3-2-1, so the whole
+      // field is released at the exact same instant -> a fair start for everyone.
+      if (t >= this.phaseEndsAt) {
+        this.phase = 'active';
+        this.phaseEndsAt = now() + ROUND_MS;
+      }
+      if (doBroadcast) this.broadcastState(Math.max(0, this.phaseEndsAt - t));
+    } else if (this.phase === 'active') {
       this.removeExpiredEchoes(t);
       if (t - this.lastCoarseAt >= BOT_COARSE_MS) { this.recomputeCoarse(); this.lastCoarseAt = t; }
       for (const p of this.players.values()) {
@@ -865,6 +879,7 @@ class Room {
       t: 'init',
       id: p.id,
       roomId: this.id,
+      roundId: this.roundId,
       grid: { w: GRID_W, h: GRID_H, cell: CELL },
       palette: PALETTE,
       phase: this.phase,
@@ -876,6 +891,7 @@ class Room {
   roundStartMsg() {
     return {
       t: 'roundstart',
+      roundId: this.roundId,
       cells: this.gridB64(),
       players: this.playerList(),
       paintEvents: this.visualPaintEvents,
@@ -921,6 +937,7 @@ class Room {
     }
     const msg = {
       t: 'state',
+      roundId: this.roundId,
       players: this.playerList(),
       scores: this.scoreArray(),
       powerups: this.publicPowerups(),

@@ -65,6 +65,34 @@ html, body {
   pointer-events: none;
 }
 
+/* Pre-round 3-2-1 countdown: a big centered number over the board, hidden until the
+   'countdown' phase. Non-interactive; re-pops on each number change; GO! goes orange. */
+#countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+  font-weight: 900;
+  font-size: clamp(120px, 28vh, 300px);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  text-shadow: 0 6px 22px rgba(0, 0, 0, 0.6), 0 0 60px rgba(255, 122, 79, 0.45);
+}
+#countdown.show { opacity: 1; }
+#countdown.go { color: var(--st-primary); text-shadow: 0 8px 40px rgba(0, 0, 0, 0.75), 0 0 48px var(--st-primary); }
+#countdown.pop { animation: cd-pop 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+@keyframes cd-pop {
+  0%   { transform: scale(0.45); }
+  55%  { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+
 /* Timer: a centered chip with a layered "electric border" (displaced ring +
    stacked glow rings + ambient bloom). The core is lightning-white and flickers;
    color shifts with urgency -- white -> purple (<30s) -> red (<10s) -- and it
@@ -405,6 +433,7 @@ html, body {
 .btn:focus-visible,
 .input:focus-visible,
 .icon-btn:focus-visible,
+.nav-btn:focus-visible,
 .link-btn:focus-visible {
   outline: none;
   border-color: var(--st-primary);
@@ -459,42 +488,63 @@ body.in-menu #game { display: none; }
   display: none;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px 14px;
-  padding: 14px 18px;
-  padding-bottom: max(14px, env(safe-area-inset-bottom));
-  background: linear-gradient(0deg, rgba(8, 9, 13, 0.86) 0%, rgba(8, 9, 13, 0.55) 55%, rgba(8, 9, 13, 0) 100%);
+  gap: 14px 18px;
+  min-height: 78px;
+  padding: 18px 20px;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(8, 9, 13, 0.94) 0%, rgba(8, 9, 13, 0.78) 58%, rgba(8, 9, 13, 0) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 -18px 40px rgba(0, 0, 0, 0.22);
   pointer-events: none;          /* gaps pass through to the game; children re-enable */
 }
 body.in-menu #bottom-nav { display: flex; }
 #bottom-nav > * { pointer-events: auto; }
-.nav-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.nav-actions { display: flex; align-items: center; gap: 8px; }
+.nav-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.nav-actions { display: flex; align-items: center; gap: 10px; }
 .nav-btn {
   appearance: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 152px;
+  min-height: 46px;
   background: rgba(20, 22, 30, 0.58);
   border: 1px solid var(--st-border);
   color: var(--st-fg);
   font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 14px;
-  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 18px 0 15px;
+  border-radius: 12px;
   cursor: pointer;
   text-decoration: none;
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
-  transition: background 0.14s ease, border-color 0.14s ease;
+  box-shadow: 0 12px 26px -18px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, transform 0.06s ease;
 }
-.nav-btn:hover { background: rgba(40, 44, 56, 0.72); border-color: var(--st-border-strong); }
+.nav-btn:hover { background: rgba(40, 44, 56, 0.74); border-color: var(--st-border-strong); box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+.nav-btn:active { transform: scale(0.96); }
+.nav-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  opacity: 0.92;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.nav-icon-play { transform: translateX(1px); }
+.nav-icon-gear { transform: translateX(-0.5px); }
+.nav-icon-x { transform: translateX(-0.5px); }
+.nav-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Settings panel re-anchors above the nav on the landing (already a non-blocking
    positioned panel, so it floats over the demo without dimming it). */
-body.in-menu #settings-menu { top: auto; bottom: 64px; right: 16px; left: auto; z-index: 8; }
+body.in-menu #settings-menu { top: auto; bottom: calc(82px + env(safe-area-inset-bottom)); right: 20px; left: auto; z-index: 8; }
 /* Compact brand wordmark, sitting in the bar. */
 .logo {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 800;
   letter-spacing: -0.5px;
   line-height: 1;
@@ -507,27 +557,52 @@ body.in-menu #settings-menu { top: auto; bottom: 64px; right: 16px; left: auto; 
 .logo span { color: var(--st-primary); -webkit-text-fill-color: var(--st-primary); }
 
 /* Name + Play: the primary action, pushed to the right edge of the bar. */
-.start-form { display: flex; flex-direction: row; align-items: center; gap: 8px; margin-left: auto; }
-.start-form .input { width: min(220px, 42vw); padding: 9px 13px; text-align: left; }
-.start-form .btn-primary { padding: 9px 20px; font-size: 15px; }
+.start-form { display: flex; flex-direction: row; align-items: center; gap: 10px; margin-left: auto; }
+.start-form .input {
+  width: min(280px, 42vw);
+  min-height: 46px;
+  padding: 0 16px;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 12px;
+}
+.start-form .btn-primary {
+  background: var(--st-primary);
+  color: var(--st-primary-fg);
+  padding: 0 18px;
+  font-size: 15px;
+  border-color: transparent;
+  box-shadow: 0 14px 30px -14px var(--st-ring), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+.start-form .btn-primary:hover {
+  background: var(--st-primary-hover);
+  box-shadow: 0 16px 34px -14px var(--st-ring), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
 
 /* Stats as badge pills, matching the nav buttons. */
-.stats { display: flex; align-items: center; gap: 8px; margin: 0; flex-wrap: wrap; }
+.stats { display: flex; align-items: center; gap: 10px; margin: 0; flex-wrap: wrap; }
 .stats:empty { display: none; }
 #bottom-nav .stat {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 7px;
   flex: none;
   background: rgba(20, 22, 30, 0.58);
   border: 1px solid var(--st-border);
-  border-radius: 10px;
-  padding: 8px 13px;
+  border-radius: 12px;
+  min-height: 44px;
+  padding: 0 16px;
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
-.stat-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--st-fg); }
-.stat-label { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--st-muted-fg); }
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.stat-value { font-size: 16px; font-weight: 800; color: var(--st-fg); }
+.stat-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--st-muted-fg); }
 
 /* Results tweaks */
 #result-title.big { font-size: 34px; }

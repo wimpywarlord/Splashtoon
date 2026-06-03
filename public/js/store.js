@@ -22,8 +22,26 @@
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (_) { /* ignore */ }
   }
 
-  const DEFAULT_STATS = { bestCoverage: 0, wins: 0, matches: 0, winStreak: 0, bestStreak: 0 };
-  const DEFAULT_AUDIO = { muted: false, volume: 0.7, musicVol: 1, sfxVol: 1 };
+  const DEFAULT_STATS = { bestCoverage: 0, wins: 0, matches: 0, winStreak: 0, bestStreak: 0, lastResultId: '' };
+  const DEFAULT_AUDIO = { muted: false, volume: 0.7, musicVol: 1, sfxVol: 1, countdown: true };
+
+  function finiteNumber(v, fallback) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function wholeNumber(v) {
+    return Math.max(0, Math.floor(finiteNumber(v, 0)));
+  }
+  function normalizeStats(raw) {
+    const s = Object.assign({}, DEFAULT_STATS, raw || {});
+    s.bestCoverage = Math.max(0, Math.min(100, finiteNumber(s.bestCoverage, 0)));
+    s.wins = wholeNumber(s.wins);
+    s.matches = wholeNumber(s.matches);
+    s.winStreak = wholeNumber(s.winStreak);
+    s.bestStreak = Math.max(wholeNumber(s.bestStreak), s.winStreak);
+    s.lastResultId = String(s.lastResultId || '');
+    return s;
+  }
 
   function getName() {
     try { return localStorage.getItem(KEY_NAME) || ''; } catch (_) { return ''; }
@@ -33,13 +51,16 @@
   }
 
   function getStats() {
-    return Object.assign({}, DEFAULT_STATS, readJSON(KEY_STATS, {}));
+    return normalizeStats(readJSON(KEY_STATS, {}));
   }
   // coveragePct: this player's final % this round; won: did they win.
-  function recordResult(coveragePct, won) {
+  function recordResult(coveragePct, won, resultId) {
     const s = getStats();
+    const id = resultId ? String(resultId) : '';
+    if (id && s.lastResultId === id) return s;
     s.matches += 1;
-    if (Number.isFinite(coveragePct) && coveragePct > s.bestCoverage) s.bestCoverage = coveragePct;
+    const pct = Math.max(0, Math.min(100, finiteNumber(coveragePct, 0)));
+    if (pct > s.bestCoverage) s.bestCoverage = pct;
     if (won) {
       s.wins += 1;
       s.winStreak += 1;
@@ -47,6 +68,7 @@
     } else {
       s.winStreak = 0;
     }
+    s.lastResultId = id;
     writeJSON(KEY_STATS, s);
     return s;
   }

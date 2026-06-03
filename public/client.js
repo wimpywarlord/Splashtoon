@@ -71,6 +71,8 @@ const els = {
   settingsBtn: document.getElementById('settings-btn'),
   navSettings: document.getElementById('nav-settings'),
   settingsMenu: document.getElementById('settings-menu'),
+  countdown: document.getElementById('countdown'),
+  countdownToggle: document.getElementById('countdown-toggle'),
   soundToggleIngame: document.getElementById('sound-toggle-ingame'),
   volSlider: document.getElementById('vol-slider'),
   musicSlider: document.getElementById('music-slider'),
@@ -89,6 +91,8 @@ let palette = [];
 let paletteRGB = [];
 
 let myId = null;
+let currentRoomId = '';
+let currentRoundId = 0;
 let mySlot = -1;
 let spectating = true;
 let phase = 'active';
@@ -100,6 +104,8 @@ let slotNames = {};       // slot -> display name, rebuilt from each player list
 let inMenu = true;        // on the start screen (not connected to a match)
 let lastTickSecond = -1;  // for one-shot countdown ticks
 let lastRankAt = 0;       // throttle for the ranking-bar re-shuffle
+let statsIntroPlayed = false;
+let statsAnimationFrame = 0;
 const rankChips = new Map(); // slot -> ranking-bar chip element (persistent for FLIP)
 
 // Other players: id -> render/target state.
@@ -144,6 +150,8 @@ function disconnect() {
   remote.clear();
   me.has = false;
   spectating = true;
+  currentRoomId = '';
+  currentRoundId = 0;
   scores = [];
   slotNames = {};
   powerups = [];
@@ -172,6 +180,8 @@ function handle(msg) {
   switch (msg.t) {
     case 'init': {
       myId = msg.id;
+      currentRoomId = msg.roomId || '';
+      if (msg.roundId != null) currentRoundId = msg.roundId;
       G.w = msg.grid.w; G.h = msg.grid.h; G.cell = msg.grid.cell;
       G.worldW = G.w * G.cell; G.worldH = G.h * G.cell;
       palette = msg.palette;
@@ -187,6 +197,7 @@ function handle(msg) {
     }
     case 'roundstart': {
       phase = msg.phase || 'active';
+      if (msg.roundId != null) currentRoundId = msg.roundId;
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
@@ -199,11 +210,15 @@ function handle(msg) {
       hide(els.results);
       refreshOverlays();
       lastTickSecond = -1;
-      if (GameAudio && !spectating) GameAudio.spawn();
+      if (GameAudio && !spectating) {
+        if (msg.phase === 'countdown') GameAudio.countdown();   // pre-round 3-2-1 SFX
+        else GameAudio.spawn();
+      }
       break;
     }
     case 'state': {
       phase = msg.phase;
+      if (msg.roundId != null) currentRoundId = msg.roundId;
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
@@ -220,6 +235,7 @@ function handle(msg) {
       // a join-in-progress. Kept separate from 'roundstart' so it carries none of
       // the round-reset side effects (spawn sound, results toggle, tick reset).
       phase = msg.phase;
+      if (msg.roundId != null) currentRoundId = msg.roundId;
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
@@ -249,6 +265,7 @@ function handle(msg) {
     }
     case 'roundover': {
       phase = 'intermission';
+      if (msg.roundId != null) currentRoundId = msg.roundId;
       scores = msg.scores;
       held.clear();
       pushInput();
@@ -260,7 +277,8 @@ function handle(msg) {
       if (!spectating && Store) {
         const total = G.w * G.h;
         const myPct = total ? ((msg.scores[mySlot] || 0) / total) * 100 : 0;
-        Store.recordResult(myPct, won);
+        const resultId = msg.roundId != null ? `${currentRoomId || 'room'}:${msg.roundId}:${myId || mySlot}` : '';
+        Store.recordResult(myPct, won, resultId);
         renderStats();
       }
       if (GameAudio) GameAudio.roundEnd(won);
@@ -1069,8 +1087,39 @@ function fmtTime(ms) {
   return `${m}:${ss}`;
 }
 
+// Pre-round countdown overlay state + setter (re-pops on each number change).
+let lastCountdownPhase = '';
+let goUntil = 0;
+function setCountdown(text) {
+  const el = els.countdown;
+  if (!el) return;
+  if (text) {
+    if (el.dataset.v !== text) {
+      el.textContent = text;
+      el.dataset.v = text;
+      el.classList.toggle('go', text === 'GO!');
+      el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');   // restart the pop
+    }
+    el.classList.add('show');
+  } else if (el.dataset.v) {
+    el.classList.remove('show');
+    el.dataset.v = '';
+  }
+}
+
 function updateHUD() {
   if (els.timerVal) els.timerVal.textContent = fmtTime(timeLeftMs);
+
+  // Pre-round 3-2-1: the server freezes the field during the 'countdown' phase and
+  // releases at 0. Mirror it, and flash GO! the instant it goes active.
+  const inCountdown = phase === 'countdown';
+  let cd = '';
+  if (inCountdown) cd = String(Math.max(1, Math.min(3, Math.ceil(timeLeftMs / 1000))));
+  else if (lastCountdownPhase === 'countdown' && phase === 'active') goUntil = nowMs + 700;
+  if (!cd && goUntil) { if (nowMs < goUntil) cd = 'GO!'; else goUntil = 0; }
+  setCountdown(cd);
+  lastCountdownPhase = phase;
+  if (els.timer) els.timer.style.visibility = inCountdown ? 'hidden' : '';   // not the round clock yet
 
   // Electric timer states: yellow <30s, red <10s, and the breathing speeds up as
   // it approaches 0 (--eb-speed shrinks from ~2.2s down to ~0.45s).
@@ -1268,18 +1317,49 @@ function escapeHtml(s) {
   ));
 }
 
-function renderStats() {
+function formatStatValue(value, decimals) {
+  const n = Number(value);
+  const safe = Number.isFinite(n) ? n : 0;
+  return decimals ? safe.toFixed(decimals) : String(Math.round(safe));
+}
+
+function renderStats(opts = {}) {
   if (!els.stats) return;
   const s = Store ? Store.getStats() : null;
-  if (!s || !s.matches) { els.stats.innerHTML = ''; return; }
+  const hasStats = !!s && (s.matches > 0 || s.wins > 0 || s.bestCoverage > 0 || s.winStreak > 0);
+  if (!hasStats) { els.stats.innerHTML = ''; return; }
   const cells = [
-    ['Wins', s.wins],
-    ['Best %', s.bestCoverage.toFixed(1)],
-    ['Streak', s.bestStreak],
+    { label: 'Wins', value: s.wins, decimals: 0 },
+    { label: 'Best %', value: s.bestCoverage, decimals: 1 },
+    { label: 'Streak', value: s.winStreak, decimals: 0 },
   ];
-  els.stats.innerHTML = cells.map(([label, val]) =>
-    `<div class="stat"><div class="stat-value">${escapeHtml(val)}</div><div class="stat-label">${label}</div></div>`
+  const animate = !!opts.animate;
+  if (statsAnimationFrame) {
+    cancelAnimationFrame(statsAnimationFrame);
+    statsAnimationFrame = 0;
+  }
+  els.stats.innerHTML = cells.map((c) =>
+    `<div class="stat" aria-label="${escapeHtml(c.label)}: ${escapeHtml(formatStatValue(c.value, c.decimals))}">
+      <div class="stat-value tabular-nums" data-value="${c.value}" data-decimals="${c.decimals}">${animate ? formatStatValue(0, c.decimals) : escapeHtml(formatStatValue(c.value, c.decimals))}</div>
+      <div class="stat-label">${escapeHtml(c.label)}</div>
+    </div>`
   ).join('');
+  if (!animate) return;
+  const vals = [...els.stats.querySelectorAll('.stat-value')];
+  const start = performance.now();
+  const duration = 720;
+  const tick = (t) => {
+    const p = Math.min(1, (t - start) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    vals.forEach((el) => {
+      const target = Number(el.dataset.value) || 0;
+      const decimals = Number(el.dataset.decimals) || 0;
+      el.textContent = formatStatValue(target * eased, decimals);
+    });
+    if (p < 1) statsAnimationFrame = requestAnimationFrame(tick);
+    else statsAnimationFrame = 0;
+  };
+  statsAnimationFrame = requestAnimationFrame(tick);
 }
 
 function syncSoundUI() {
@@ -1289,6 +1369,7 @@ function syncSoundUI() {
   const musicVol = GameAudio ? GameAudio.getMusicVolume() : a.musicVol;
   const sfxVol = GameAudio ? GameAudio.getSfxVolume() : a.sfxVol;
   if (els.soundToggleIngame) els.soundToggleIngame.textContent = muted ? 'Off' : 'On';
+  if (els.countdownToggle) els.countdownToggle.textContent = (GameAudio ? GameAudio.isCountdownEnabled() : a.countdown !== false) ? 'On' : 'Off';
   if (els.volSlider) els.volSlider.value = String(Math.round(vol * 100));
   if (els.musicSlider) els.musicSlider.value = String(Math.round(musicVol * 100));
   if (els.sfxSlider) els.sfxSlider.value = String(Math.round(sfxVol * 100));
@@ -1298,6 +1379,13 @@ function toggleSound() {
   const muted = GameAudio ? !GameAudio.isMuted() : true;
   if (GameAudio) { GameAudio.unlock(); GameAudio.setMuted(muted); }
   if (Store) Store.setAudio({ muted });
+  syncSoundUI();
+}
+
+function toggleCountdown() {
+  const on = GameAudio ? !GameAudio.isCountdownEnabled() : false;
+  if (GameAudio) { GameAudio.unlock(); GameAudio.setCountdownEnabled(on); }
+  if (Store) Store.setAudio({ countdown: on });
   syncSoundUI();
 }
 
@@ -1352,12 +1440,15 @@ function initMenu() {
     const saved = Store.getName();
     if (saved) els.nameInput.value = saved;
   }
-  renderStats();
+  renderStats({ animate: !statsIntroPlayed });
+  statsIntroPlayed = true;
   syncSoundUI();
   setBarVisible(false);
   setNavVisible(true);
   hide(els.spectate);
   hide(els.results);
+  setCountdown('');                          // clear any leftover countdown overlay
+  lastCountdownPhase = ''; goUntil = 0;
   setTimeout(() => { if (els.nameInput) els.nameInput.focus(); }, 60);
 }
 
@@ -1384,6 +1475,7 @@ if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', leaveToMenu
 if (els.settingsBtn) els.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
 if (els.navSettings) els.navSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
 if (els.soundToggleIngame) els.soundToggleIngame.addEventListener('click', toggleSound);
+if (els.countdownToggle) els.countdownToggle.addEventListener('click', toggleCountdown);
 if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Number(els.volSlider.value)));
 if (els.musicSlider) els.musicSlider.addEventListener('input', () => setMusicVolume(Number(els.musicSlider.value)));
 if (els.sfxSlider) els.sfxSlider.addEventListener('input', () => setSfxVolume(Number(els.sfxSlider.value)));

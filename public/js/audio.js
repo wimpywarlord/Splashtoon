@@ -45,6 +45,10 @@
   let nextNoteTime = 0;
   let step = 0;
 
+  // Pre-round countdown SFX: a synthesized 3-2-1-GO, scheduled on the audio clock so
+  // it lines up exactly with the on-screen numbers. Toggleable independently.
+  let countdownEnabled = true;
+
   function supported() {
     return !!(global.AudioContext || global.webkitAudioContext);
   }
@@ -254,6 +258,26 @@
     duck(0.3, 0.55);
   }
 
+  // ---- pre-round countdown (synthesized 3-2-1-GO) ---------------------------
+  // Scheduled on the audio clock from round start: a rising beep per second for
+  // 3 / 2 / 1, then a brighter fanfare at GO -- so it lines up with the on-screen
+  // numbers (server countdown = 3s) with zero drift, no asset to load.
+  function countdown() {
+    if (!ctx || muted || !countdownEnabled) return;
+    const t0 = now();
+    const beep = (at, f) => {
+      tone({ type: 'square',   f0: f,     dur: 0.15, gain: 0.26, at, attack: 0.004 });
+      tone({ type: 'triangle', f0: f / 2, dur: 0.16, gain: 0.12, at });            // body
+    };
+    beep(t0 + 0, 620);   // "3"
+    beep(t0 + 1, 700);   // "2"
+    beep(t0 + 2, 820);   // "1"
+    const g = t0 + 3;    // "GO!" -- right as the field unfreezes
+    tone({ type: 'triangle', f0: 760, f1: 1240, dur: 0.5,  gain: 0.34, at: g, attack: 0.005 });
+    tone({ type: 'sine',     f0: 1240,          dur: 0.45, gain: 0.16, at: g + 0.02 });
+    tone({ type: 'square',   f0: 380, f1: 620,  dur: 0.45, gain: 0.12, at: g });
+  }
+
   // ---- movement whoosh (driven by predicted local speed) --------------------
   function startWhoosh() {
     if (!ctx) return;
@@ -371,6 +395,8 @@
   function setSfxVolume(v) { sfxVol = clamp01(v); applySfxVol(); }
   function getSfxVolume() { return sfxVol; }
   function setMusicEnabled(on) { musicOn = !!on; }
+  function setCountdownEnabled(on) { countdownEnabled = !!on; }
+  function isCountdownEnabled() { return countdownEnabled; }
 
   // Initialize prefs from store if present.
   try {
@@ -380,6 +406,7 @@
       volume = typeof a.volume === 'number' ? a.volume : volume;
       musicVol = typeof a.musicVol === 'number' ? a.musicVol : musicVol;
       sfxVol = typeof a.sfxVol === 'number' ? a.sfxVol : sfxVol;
+      countdownEnabled = a.countdown !== false;   // default on
     }
   } catch (_) { /* ignore */ }
 
@@ -390,6 +417,7 @@
 
   global.SplashtoonAudio = {
     unlock, pickup, impact, tick, roundEnd, spawn, powerupSpawn, movement, duck,
+    countdown, setCountdownEnabled, isCountdownEnabled,
     setMuted, isMuted, setVolume, getVolume, setMusicEnabled,
     setMusicVolume, getMusicVolume, setSfxVolume, getSfxVolume,
   };

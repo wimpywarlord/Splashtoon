@@ -48,6 +48,7 @@ const MIN_PAINT_MOVE2 = 0.4;
 
 const ROUND_MS = 120_000;
 const INTERMISSION_MS = 10_000;
+const COUNTDOWN_MS = 3_000;   // pre-round 3-2-1 freeze so the whole field starts together
 
 const POWERUP_EFFECT_MS = 4_000;
 const POWERUP_MAX = 2;
@@ -177,6 +178,7 @@ module.exports = {
   MIN_PAINT_MOVE2,
   ROUND_MS,
   INTERMISSION_MS,
+  COUNTDOWN_MS,
   POWERUP_EFFECT_MS,
   POWERUP_MAX,
   POWERUP_SPAWN_MS,
