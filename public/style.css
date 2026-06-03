@@ -66,9 +66,9 @@ html, body {
 }
 
 /* Timer: a centered chip with a layered "electric border" (displaced ring +
-   stacked glow rings + ambient bloom). Color temperature climbs as time runs
-   out -- cool -> yellow (<30s) -> red (<10s) -- and it breathes faster toward 0
-   (JS sets --eb-speed). */
+   stacked glow rings + ambient bloom). The core is lightning-white and flickers;
+   color shifts with urgency -- white -> purple (<30s) -> red (<10s) -- and it
+   breathes faster toward 0 (JS sets --eb-speed). */
 #timer {
   position: relative;
   flex: none;
@@ -80,33 +80,35 @@ html, body {
   background: rgba(6, 8, 12, 0.62);
   font-variant-numeric: tabular-nums;
   isolation: isolate;
-  --eb: #38b6ff;          /* electric color (cool by default) */
-  --eb-light: #cdebff;    /* highlight tint */
-  --eb-glow: 0.55;        /* glow strength */
+  --eb: #f2f5ff;          /* core border color -- lightning white by default */
+  --eb-light: #cdd8ff;    /* halo tint (faint cool cast, like real lightning) */
+  --eb-glow: 0.62;        /* glow strength */
   --eb-speed: 2.4s;       /* breathing period (shortened by JS near 0) */
 }
 #timer > span:not(.timer-val) {
   position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
 }
-#timer .eb-base   { border: 1.5px solid color-mix(in srgb, var(--eb) 42%, transparent); }
-#timer .eb-main   { border: 1.5px solid var(--eb); filter: url(#eb-displace); }
-#timer .eb-glow-1 { border: 2px solid var(--eb);         filter: blur(2px); opacity: var(--eb-glow); }
-#timer .eb-glow-2 { border: 2.5px solid var(--eb-light); filter: blur(6px); opacity: calc(var(--eb-glow) * 0.7); }
+#timer .eb-base   { border: 1.5px solid color-mix(in srgb, var(--eb) 38%, transparent); }
+#timer .eb-main   { border: 1.5px solid var(--eb); filter: url(#eb-displace) drop-shadow(0 0 2px var(--eb)); }
+#timer .eb-glow-1 { border: 2px solid var(--eb);         filter: blur(2px); opacity: var(--eb-glow);
+                    animation: eb-flicker 2.7s ease-in-out infinite; }   /* electric flicker (calm state) */
+#timer .eb-glow-2 { border: 2.5px solid var(--eb-light); filter: blur(7px); opacity: calc(var(--eb-glow) * 0.7); }
 #timer .eb-bg {
-  inset: -4px; border-radius: 13px; z-index: -1;
-  transform: scale(1.04); filter: blur(13px);
+  inset: -5px; border-radius: 14px; z-index: -1;
+  transform: scale(1.05); filter: blur(14px);
   opacity: calc(var(--eb-glow) * 0.6);
   background: linear-gradient(-30deg, var(--eb-light), transparent 45%, var(--eb));
 }
-#timer .timer-val { position: relative; z-index: 2; color: var(--st-fg); text-shadow: 0 1px 5px rgba(0, 0, 0, 0.75); }
+#timer .timer-val { position: relative; z-index: 2; color: #f4f6ff; text-shadow: 0 0 6px var(--eb-light), 0 1px 5px rgba(0, 0, 0, 0.75); }
 
-/* States: color temperature + glow rise as the clock runs down. */
-#timer.warn   { --eb: #ffcf3a; --eb-light: #fff0b8; --eb-glow: 0.8; }
-#timer.danger { --eb: #ff4242; --eb-light: #ffc2c2; --eb-glow: 1; }
-#timer.warn .timer-val   { color: #ffe79a; }
-#timer.danger .timer-val { color: #ff9b9b; }
+/* Urgency: purple under 30s, red under 10s; glow rises. */
+#timer.warn   { --eb: #b15cff; --eb-light: #e3ccff; --eb-glow: 0.9; }
+#timer.danger { --eb: #ff3b3b; --eb-light: #ffb3b3; --eb-glow: 1; }
+#timer.warn .timer-val   { color: #f0e0ff; }
+#timer.danger .timer-val { color: #ffd0d0; }
 
-/* Breathing (scale + glow pulse) only in the final 30s; --eb-speed intensifies it. */
+/* Breathing (scale + glow pulse) only in the final 30s; --eb-speed intensifies it
+   and replaces the calm flicker on the glow. */
 #timer.warn, #timer.danger { animation: eb-breathe var(--eb-speed) ease-in-out infinite; }
 #timer.warn   .eb-glow-1, #timer.warn   .eb-glow-2, #timer.warn   .eb-bg,
 #timer.danger .eb-glow-1, #timer.danger .eb-glow-2, #timer.danger .eb-bg {
@@ -114,6 +116,15 @@ html, body {
 }
 @keyframes eb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
 @keyframes eb-pulse   { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+@keyframes eb-flicker {
+  0%, 100% { opacity: var(--eb-glow); }
+  28% { opacity: calc(var(--eb-glow) * 0.55); }
+  32% { opacity: calc(var(--eb-glow) * 0.95); }
+  53% { opacity: calc(var(--eb-glow) * 0.68); }
+  58% { opacity: var(--eb-glow); }
+  79% { opacity: calc(var(--eb-glow) * 0.6); }
+  83% { opacity: calc(var(--eb-glow) * 0.9); }
+}
 
 .score-row {
   display: flex;

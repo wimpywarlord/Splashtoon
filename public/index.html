@@ -90,19 +90,19 @@
   <!-- Animated turbulence filter for the timer's electric border -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <filter id="eb-displace" color-interpolation-filters="sRGB" x="-45%" y="-45%" width="190%" height="190%">
-        <feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="8" result="n1" seed="1" />
-        <feOffset in="n1" result="o1"><animate attributeName="dy" values="240; 0" dur="5s" repeatCount="indefinite" calcMode="linear" /></feOffset>
-        <feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="8" result="n2" seed="1" />
-        <feOffset in="n2" result="o2"><animate attributeName="dy" values="0; -240" dur="5s" repeatCount="indefinite" calcMode="linear" /></feOffset>
-        <feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="8" result="n3" seed="2" />
-        <feOffset in="n3" result="o3"><animate attributeName="dx" values="170; 0" dur="5s" repeatCount="indefinite" calcMode="linear" /></feOffset>
-        <feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="8" result="n4" seed="2" />
-        <feOffset in="n4" result="o4"><animate attributeName="dx" values="0; -170" dur="5s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+      <filter id="eb-displace" color-interpolation-filters="sRGB" x="-50%" y="-50%" width="200%" height="200%">
+        <feTurbulence type="turbulence" baseFrequency="0.018 0.045" numOctaves="6" result="n1" seed="3" />
+        <feOffset in="n1" result="o1"><animate attributeName="dy" values="180; 0" dur="3.6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feTurbulence type="turbulence" baseFrequency="0.018 0.045" numOctaves="6" result="n2" seed="3" />
+        <feOffset in="n2" result="o2"><animate attributeName="dy" values="0; -180" dur="3.6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feTurbulence type="turbulence" baseFrequency="0.018 0.045" numOctaves="6" result="n3" seed="7" />
+        <feOffset in="n3" result="o3"><animate attributeName="dx" values="150; 0" dur="3.6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
+        <feTurbulence type="turbulence" baseFrequency="0.018 0.045" numOctaves="6" result="n4" seed="7" />
+        <feOffset in="n4" result="o4"><animate attributeName="dx" values="0; -150" dur="3.6s" repeatCount="indefinite" calcMode="linear" /></feOffset>
         <feComposite in="o1" in2="o2" result="p1" />
         <feComposite in="o3" in2="o4" result="p2" />
         <feBlend in="p1" in2="p2" mode="color-dodge" result="comb" />
-        <feDisplacementMap in="SourceGraphic" in2="comb" scale="7" xChannelSelector="R" yChannelSelector="B" />
+        <feDisplacementMap in="SourceGraphic" in2="comb" scale="9" xChannelSelector="R" yChannelSelector="B" />
       </filter>
     </defs>
   </svg>

@@ -672,9 +672,14 @@ function drawGroundShadow(x, y, rx, ry, alpha = 0.32) {
 // Draw the in-game brush spirit. The atlas owns pose; runtime only selects a
 // row and mirrors speed-left. Do not rotate brush sprites to fake direction.
 function spriteDrawHeight(state) {
-  if (state === 'idle' || state.endsWith('-idle')) return PET_IDLE_DRAW_H;
-  if (state === 'drift') return PET_DRIFT_DRAW_H;
-  return PET_DRAW_H;
+  let h;
+  if (state === 'idle' || state.endsWith('-idle')) h = PET_IDLE_DRAW_H;
+  else if (state === 'drift') h = PET_DRIFT_DRAW_H;
+  else h = PET_DRAW_H;
+  // The ink-jam (no-paint) art reads a touch larger than the other states because
+  // of its spiky ink burst; trim it slightly so it matches the rest.
+  if (state === 'inkjam-disabled' || state === 'inkjam-disabled-idle') h *= 0.94;
+  return h;
 }
 
 function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint, castType, inputActive) {
@@ -793,25 +798,25 @@ function drawActors() {
 function render() {
   const dpr = cam.dpr;
   const barH = cam.barH || 0;
-  const pvw = cam.cssW;                 // play region = viewport minus the bar
-  const pvh = Math.max(1, cam.cssH - barH);
-  // In-game: CONTAIN so every player sees the IDENTICAL whole arena regardless of
-  // window/monitor shape -- a level playing field (cropping/camera would make what
-  // you can see depend on your hardware). Menu background: COVER for full bleed.
+  const pvw = cam.cssW;
+  const pvh = Math.max(1, cam.cssH - barH);   // everything below the top bar
+  // In-game: a 16:9 board that fills the full height under the bar (CONTAIN, so it
+  // can never exceed the width either). Every player sees the IDENTICAL whole arena
+  // regardless of window shape -- a level playing field. Menu bg: COVER (full bleed).
   const z = inMenu
     ? Math.max(pvw / G.worldW, pvh / G.worldH)
     : Math.min(pvw / G.worldW, pvh / G.worldH);
   cam.zoom = z;
   const bw = G.worldW * z, bh = G.worldH * z;   // board size on screen (css px)
   const ox = (pvw - bw) / 2;
-  // Flush the board to the bar (no top gap, and brush tips lean over the bar);
-  // any leftover slack sits below the board as clean chrome.
+  // Flush to the bar: the board fills the height below it (bar takes the remaining
+  // height up top); brush tips lean over the bar. Any side slack is chrome.
   const oy = inMenu ? (pvh - bh) / 2 : barH;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // Margins use the app chrome color (darker than the board) so the arena reads as
-  // a distinct surface, not padding glued to the board.
+  // Chrome (darker than the board) fills the area under the bar so any side margin
+  // reads as a framed surface rather than padding glued to the board.
   if (!inMenu) {
     ctx.fillStyle = CHROME_BG;
     ctx.fillRect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
