@@ -48,6 +48,7 @@ powerupSheet.src = '/assets/powerups.png';
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const ARENA_BG = '#14171f';   // dark arena surface; neon paint and brushes pop against it
+const CHROME_BG = '#0a0b10';  // app chrome behind/around the board (darker than the arena)
 ctx.imageSmoothingEnabled = true;   // smooth sprite + paint scaling (was pixelated)
 
 const els = {
@@ -794,29 +795,48 @@ function render() {
   const barH = cam.barH || 0;
   const pvw = cam.cssW;                 // play region = viewport minus the bar
   const pvh = Math.max(1, cam.cssH - barH);
-  // In-game: CONTAIN so the whole arena (and your brush) is always on screen, no
-  // matter the window/sidebar shape. Menu background: COVER for a full-bleed look.
+  // In-game: CONTAIN so every player sees the IDENTICAL whole arena regardless of
+  // window/monitor shape -- a level playing field (cropping/camera would make what
+  // you can see depend on your hardware). Menu background: COVER for full bleed.
   const z = inMenu
     ? Math.max(pvw / G.worldW, pvh / G.worldH)
     : Math.min(pvw / G.worldW, pvh / G.worldH);
   cam.zoom = z;
-  const ox = (pvw - G.worldW * z) / 2;
-  const oy = barH + (pvh - G.worldH * z) / 2;
+  const bw = G.worldW * z, bh = G.worldH * z;   // board size on screen (css px)
+  const ox = (pvw - bw) / 2;
+  // Flush the board to the bar (no top gap, and brush tips lean over the bar);
+  // any leftover slack sits below the board as clean chrome.
+  const oy = inMenu ? (pvh - bh) / 2 : barH;
 
-  // Clear everything; the bar strip stays transparent so the DOM bar shows through.
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = ARENA_BG;
-  ctx.fillRect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
+  // Margins use the app chrome color (darker than the board) so the arena reads as
+  // a distinct surface, not padding glued to the board.
+  if (!inMenu) {
+    ctx.fillStyle = CHROME_BG;
+    ctx.fillRect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
+  }
 
-  // Board content (paint, powerups, impacts) clipped to the play region.
+  // Board content (paint, powerups, impacts) clipped to the board rect.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, Math.round(barH * dpr), canvas.width, Math.round(pvh * dpr));
+  ctx.rect(Math.round(ox * dpr), Math.round(oy * dpr), Math.round(bw * dpr), Math.round(bh * dpr));
   ctx.clip();
   ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
   drawBoardContent();
   ctx.restore();
+
+  // Subtle framed-panel edge around the board so the margins look intentional.
+  if (!inMenu) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = 20 * dpr;
+    ctx.shadowOffsetY = 5 * dpr;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.strokeRect(ox * dpr + 0.5, oy * dpr + 0.5, bw * dpr - 1, bh * dpr - 1);
+    ctx.restore();
+  }
 
   // Brushes UNCLIPPED on top -> their tips can poke up over the bar.
   ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
