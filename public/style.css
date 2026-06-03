@@ -87,35 +87,24 @@ html, body {
   z-index: 3;
 }
 
+/* Timer: a flex child centered in the top bar (see #topbar). */
 #timer {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 34px;
+  position: static;
+  flex: none;
+  font-size: 19px;
   font-weight: 700;
-  letter-spacing: 2px;
-  padding: 6px 18px;
-  background: var(--panel);
-  border-radius: 10px;
+  letter-spacing: 1px;
+  padding: 3px 14px;
+  color: var(--st-fg, #f4f6fb);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 #timer.urgent { color: #ff5a6e; animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: 0.55; } }
 
-#scoreboard {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  background: var(--panel);
-  border-radius: 10px;
-  min-width: 170px;
-}
 .score-row {
   display: flex;
   align-items: center;
@@ -262,51 +251,78 @@ html, body {
   backdrop-filter: blur(10px);
 }
 
-/* HUD timer chip */
-#timer {
-  top: 14px;
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  padding: 6px 16px;
-  background: var(--st-card);
-  border: 1px solid var(--st-border);
-  border-radius: var(--st-radius);
-  box-shadow: var(--st-shadow);
-}
+/* (timer is styled inline in the top bar -- see the base #timer rule) */
 #timer.urgent { color: #ff5a6e; }
 
-/* HUD scoreboard card */
-/* Compact standings strip: sits in the TOP MATTE (above the board) so it never
-   covers the canvas. Shows the leader (crowned) + runner-up [+ you]. */
-#scoreboard {
-  top: -36px;            /* in the matte, above the board's top edge */
-  right: 4px;
-  left: auto;
-  bottom: auto;
-  flex-direction: row;
+/* Block-level top bar: settings (left), full ranking split around the centered
+   timer. Entries are sorted by coverage and smoothly re-shuffle (FLIP). */
+#topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  display: flex;
   align-items: center;
-  gap: 0;
-  min-width: 0;
-  padding: 4px 8px;
-  background: rgba(12, 13, 18, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  white-space: nowrap;
+  gap: 8px;
+  padding: 0 10px;
+  background: linear-gradient(180deg, rgba(8, 9, 13, 0.85), rgba(8, 9, 13, 0.55));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   font-variant-numeric: tabular-nums;
 }
-.lb-item { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 13px; line-height: 1; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7); }
-.lb-item.me { font-weight: 700; }
+.rank-group {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+#rank-left { justify-content: flex-end; }     /* hug the timer from the left */
+#rank-right { justify-content: flex-start; }   /* hug the timer from the right */
+.topbar-spacer { width: 34px; flex: none; }    /* balances the settings button -> timer truly centered */
+
+.lb-item {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 3px 9px; font-size: 13px; line-height: 1; border-radius: 8px;
+  transition: transform 0.45s ease;          /* FLIP slide when ranks shuffle */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.lb-item.me { font-weight: 700; background: rgba(255, 255, 255, 0.08); }
 .lb-crown { width: 15px; height: 15px; object-fit: contain; flex: none; }
 .lb-rank { color: var(--st-muted-fg); font-size: 11px; font-weight: 700; min-width: 13px; text-align: center; }
-.lb-rank.you { color: var(--st-primary); }
-.lb-name { color: var(--st-fg); max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+.lb-name { color: var(--st-fg); max-width: 88px; overflow: hidden; text-overflow: ellipsis; }
 .lb-pct { color: var(--st-fg); font-weight: 700; }
-.lb-sep { width: 1px; align-self: stretch; background: rgba(255, 255, 255, 0.12); margin: 3px 1px; }
 .lb-item .swatch { width: 11px; height: 11px; }
+
+/* Settings dropdown */
+#settings-menu {
+  position: absolute;
+  top: 46px;
+  left: 8px;
+  width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  background: var(--st-card);
+  border: 1px solid var(--st-border);
+  border-radius: 12px;
+  box-shadow: var(--st-shadow);
+  z-index: 6;
+}
+#settings-menu.hidden { display: none; }
+.settings-title { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--st-muted-fg); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--st-fg); }
+.settings-row input[type="range"] { flex: 1; accent-color: var(--st-primary); cursor: pointer; }
+.settings-btn-sm {
+  appearance: none; border: 1px solid var(--st-border-strong); background: transparent;
+  color: var(--st-fg); font: inherit; font-size: 12px; font-weight: 600;
+  padding: 4px 12px; border-radius: 8px; cursor: pointer;
+}
+.settings-btn-sm:hover { background: rgba(255, 255, 255, 0.06); }
 
 /* Results panel rows (full standings at round end) */
 .score-row { font-size: 13.5px; letter-spacing: 0.2px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85); }
@@ -375,28 +391,23 @@ html, body {
 }
 
 /* Icon button (HUD mute) */
+/* Settings gear in the top bar (Mac-toolbar style) */
 .icon-btn {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  width: 38px;
-  height: 38px;
+  flex: none;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 17px;
-  line-height: 1;
-  color: var(--st-fg);
-  background: var(--st-card);
+  color: var(--st-muted-fg);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--st-border);
-  border-radius: 10px;
-  box-shadow: var(--st-shadow);
+  border-radius: 8px;
   cursor: pointer;
-  pointer-events: auto;
-  transition: background 0.14s ease, opacity 0.14s ease;
+  transition: background 0.14s ease, color 0.14s ease;
 }
-.icon-btn:hover { background: rgba(255, 255, 255, 0.06); }
-.icon-btn[aria-pressed="true"] { opacity: 0.55; }
+.icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--st-fg); }
+.icon-btn[aria-expanded="true"] { background: rgba(255, 255, 255, 0.12); color: var(--st-fg); }
 
 .link-btn {
   appearance: none;

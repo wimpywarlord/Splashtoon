@@ -52,7 +52,8 @@ ctx.imageSmoothingEnabled = true;   // smooth sprite + paint scaling (was pixela
 
 const els = {
   timer: document.getElementById('timer'),
-  scoreboard: document.getElementById('scoreboard'),
+  rankLeft: document.getElementById('rank-left'),
+  rankRight: document.getElementById('rank-right'),
   hud: document.getElementById('hud'),
   spectate: document.getElementById('spectate'),
   results: document.getElementById('results'),
@@ -63,9 +64,12 @@ const els = {
   startForm: document.getElementById('start-form'),
   nameInput: document.getElementById('name-input'),
   stats: document.getElementById('stats'),
-  muteBtn: document.getElementById('mute-btn'),
   soundToggle: document.getElementById('sound-toggle'),
   resultsMenuBtn: document.getElementById('results-menu-btn'),
+  settingsBtn: document.getElementById('settings-btn'),
+  settingsMenu: document.getElementById('settings-menu'),
+  soundToggleIngame: document.getElementById('sound-toggle-ingame'),
+  volSlider: document.getElementById('vol-slider'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -93,6 +97,8 @@ let myName = '';
 let slotNames = {};       // slot -> display name, rebuilt from each player list
 let inMenu = true;        // on the start screen (not connected to a match)
 let lastTickSecond = -1;  // for one-shot countdown ticks
+let lastRankAt = 0;       // throttle for the ranking-bar re-shuffle
+const rankChips = new Map(); // slot -> ranking-bar chip element (persistent for FLIP)
 
 // Other players: id -> render/target state.
 const remote = new Map();
@@ -110,13 +116,9 @@ let nowMs = 0;
 let paintLayer = null;
 let paintCtx = null;
 
-// Layout: the canvas fills the viewport and the fixed 16:9 arena is drawn as an
-// elevated, rounded, white-bordered "platform" inset within it (board* rect, in
-// CSS px). The matte around it is the canvas background; brushes are drawn on top
-// UNCLIPPED so they lean over the platform edge instead of being cut. zoom maps
-// world px -> CSS px on the board.
-const ARENA_VOID = '#0a0b10';
-const cam = { boardX: 0, boardY: 0, boardW: 1280, boardH: 720, zoom: 1, dpr: 1, cssW: 1280, cssH: 720 };
+// Layout: borderless + full-screen. The 16:9 arena is scaled to COVER the whole
+// viewport (centered; the longer axis overflows). zoom maps world px -> CSS px.
+const cam = { zoom: 1, dpr: 1, cssW: 1280, cssH: 720 };
 
 // ---- WebSocket --------------------------------------------------------------
 let ws = null;
@@ -137,6 +139,7 @@ function disconnect() {
   scores = [];
   slotNames = {};
   powerups = [];
+  clearRankBar();
 }
 
 function send(obj) {
@@ -746,17 +749,6 @@ function drawPowerup(pu) {
   drawPowerupSprite(pu.type, 'active', x, y, 56);
 }
 
-function roundRectPath(c, x, y, w, h, r) {
-  if (c.roundRect) { c.beginPath(); c.roundRect(x, y, w, h, r); return; }
-  c.beginPath();
-  c.moveTo(x + r, y);
-  c.arcTo(x + w, y, x + w, y + h, r);
-  c.arcTo(x + w, y + h, x, y + h, r);
-  c.arcTo(x, y + h, x, y, r);
-  c.arcTo(x, y, x + w, y, r);
-  c.closePath();
-}
-
 // Board contents in WORLD coordinates (caller sets the world->device transform).
 function drawBoardContent() {
   ctx.fillStyle = ARENA_BG;
@@ -798,66 +790,21 @@ function drawActors() {
 
 function render() {
   const dpr = cam.dpr;
-
-  // Landing page: the game is just a full-bleed BACKGROUND -- fill the viewport
-  // (cover), no platform / border / shadow.
-  if (inMenu) {
-    const z = Math.max(cam.cssW / G.worldW, cam.cssH / G.worldH);
-    const ox = (cam.cssW - G.worldW * z) / 2;
-    const oy = (cam.cssH - G.worldH * z) / 2;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = ARENA_BG;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
-    ctx.fillStyle = ARENA_BG;
-    ctx.fillRect(0, 0, G.worldW, G.worldH);
-    if (paintLayer) ctx.drawImage(paintLayer, 0, 0, paintLayer.width, paintLayer.height, 0, 0, G.worldW, G.worldH);
-    bgSim.drawBrushes();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    return;
-  }
-
-  // In game: draw the arena as an elevated, rounded, white-bordered platform.
-  const zoom = cam.zoom;
-  const dx = Math.round(cam.boardX * dpr), dy = Math.round(cam.boardY * dpr);
-  const dw = Math.round(cam.boardW * dpr), dh = Math.round(cam.boardH * dpr);
-  const R = 16 * dpr;
-  const worldTf = () => ctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, dx, dy);
+  // Borderless + full-screen: the arena COVERS the whole viewport. Same path for
+  // the menu (local sim) and in-game (server) -- only the brush source differs.
+  const z = Math.max(cam.cssW / G.worldW, cam.cssH / G.worldH);
+  cam.zoom = z;
+  const ox = (cam.cssW - G.worldW * z) / 2;
+  const oy = (cam.cssH - G.worldH * z) / 2;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = ARENA_VOID;
+  ctx.fillStyle = ARENA_BG;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Elevated drop shadow under the board.
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-  ctx.shadowBlur = 40 * dpr;
-  ctx.shadowOffsetY = 18 * dpr;
-  ctx.fillStyle = '#000';
-  roundRectPath(ctx, dx, dy, dw, dh, R);
-  ctx.fill();
-  ctx.restore();
-
-  // Board surface, clipped to the rounded rect.
-  ctx.save();
-  roundRectPath(ctx, dx, dy, dw, dh, R);
-  ctx.clip();
-  worldTf();
+  ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
   drawBoardContent();
-  ctx.restore();
-
-  // White rounded border.
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.lineWidth = 3 * dpr;
-  ctx.strokeStyle = '#ffffff';
-  roundRectPath(ctx, dx, dy, dw, dh, R);
-  ctx.stroke();
-
-  // Brushes on top, UNCLIPPED, so they lean over the platform edge.
-  worldTf();
-  drawActors();
+  if (inMenu) bgSim.drawBrushes(); else drawActors();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
@@ -945,36 +892,66 @@ function updateHUD() {
     lastTickSecond = -1;
   }
 
-  // Compact standings: only what matters in a 1-winner game -- the leader
-  // (crowned) and the runner-up, plus your own standing if you're further down.
+  // Live ranking bar (throttled so the FLIP re-shuffle reads clearly).
+  if (!inMenu && nowMs - lastRankAt > 350) { lastRankAt = nowMs; updateRankBar(); }
+}
+
+// Ranking bar: every active player as a chip, sorted by coverage (leader
+// crowned). The list is split around the centered timer -- top half to the left
+// group, bottom half to the right group. Chips persist and slide to their new
+// spot when ranks change (FLIP), so the ranking visibly re-shuffles.
+function updateRankBar() {
+  if (!els.rankLeft || !els.rankRight) return;
   const total = G.w * G.h;
   const ranked = [];
   for (let s = 0; s < scores.length; s++) {
     const occupied = mySlot === s || [...remote.values()].some((r) => r.slot === s);
-    if (scores[s] > 0 || occupied) ranked.push({ slot: s, score: scores[s] });
+    if (scores[s] > 0 || occupied) ranked.push(s);
   }
-  ranked.sort((a, b) => b.score - a.score);
+  ranked.sort((a, b) => scores[b] - scores[a]);
+  const mid = Math.ceil(ranked.length / 2);
 
-  const items = [];
-  if (ranked[0]) items.push({ ...ranked[0], rank: 1, crown: true });
-  if (ranked[1]) items.push({ ...ranked[1], rank: 2 });
-  const myRank = (!spectating && mySlot >= 0) ? ranked.findIndex((r) => r.slot === mySlot) : -1;
-  if (myRank >= 2) items.push({ ...ranked[myRank], rank: myRank + 1, you: true });
+  // FIRST: where each chip is now.
+  const firstLeft = new Map();
+  for (const [slot, el] of rankChips) firstLeft.set(slot, el.getBoundingClientRect().left);
 
-  els.scoreboard.innerHTML = items.map((it) => {
-    const pct = ((it.score / total) * 100).toFixed(1);
-    const isMe = it.slot === mySlot && !spectating;
-    const name = it.you ? 'You' : (slotNames[it.slot] || `P${it.slot + 1}`);
-    const badge = it.crown
+  // Build/update chips in ranked order; left half -> left group, rest -> right.
+  const active = new Set(ranked);
+  ranked.forEach((slot, i) => {
+    let el = rankChips.get(slot);
+    if (!el) { el = document.createElement('div'); rankChips.set(slot, el); }
+    const pct = ((scores[slot] / total) * 100).toFixed(1);
+    const isMe = slot === mySlot && !spectating;
+    const nm = slotNames[slot] || `P${slot + 1}`;
+    const badge = i === 0
       ? '<img class="lb-crown" src="/assets/crown.png" alt="leader">'
-      : `<span class="lb-rank${it.you ? ' you' : ''}">${it.rank}</span>`;
-    return `<div class="lb-item${isMe ? ' me' : ''}">
-      ${badge}
-      <span class="swatch" style="background:${palette[it.slot]}"></span>
-      <span class="lb-name">${escapeHtml(name)}</span>
-      <span class="lb-pct">${pct}%</span>
-    </div>`;
-  }).join('<span class="lb-sep"></span>');
+      : `<span class="lb-rank">${i + 1}</span>`;
+    el.className = 'lb-item' + (isMe ? ' me' : '');
+    el.innerHTML = `${badge}<span class="swatch" style="background:${palette[slot]}"></span><span class="lb-name">${escapeHtml(nm)}</span><span class="lb-pct">${pct}%</span>`;
+    (i < mid ? els.rankLeft : els.rankRight).appendChild(el);
+  });
+  for (const [slot, el] of [...rankChips]) {
+    if (!active.has(slot)) { el.remove(); rankChips.delete(slot); }
+  }
+
+  // LAST + INVERT + PLAY: slide each chip from its old spot to the new one
+  // (works across the two groups since rects are viewport-absolute).
+  for (const [slot, el] of rankChips) {
+    if (!firstLeft.has(slot)) continue;
+    const dx = firstLeft.get(slot) - el.getBoundingClientRect().left;
+    if (Math.abs(dx) < 0.5) continue;
+    el.style.transition = 'none';
+    el.style.transform = `translateX(${dx}px)`;
+    el.getBoundingClientRect();            // force reflow so the invert applies
+    el.style.transition = 'transform 0.45s ease';
+    el.style.transform = '';
+  }
+}
+
+function clearRankBar() {
+  rankChips.clear();
+  if (els.rankLeft) els.rankLeft.innerHTML = '';
+  if (els.rankRight) els.rankRight.innerHTML = '';
 }
 
 function refreshOverlays() {
@@ -1049,29 +1026,14 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 
-// ---- Layout (full-viewport canvas; 16:9 platform inset within it) ------------
+// ---- Layout (borderless, full-screen) ---------------------------------------
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const iw = window.innerWidth, ih = window.innerHeight;
-  // The board is inset by a matte big enough to (a) keep window/handle edges off
-  // the board and (b) give brushes room to lean past the platform edge without
-  // being clipped at the viewport boundary.
-  const pad = Math.min(96, Math.max(40, Math.round(Math.min(iw, ih) * 0.06)));
-  const availW = Math.max(160, iw - 2 * pad);
-  const availH = Math.max(90, ih - 2 * pad);
-  const aspect = G.worldW / G.worldH;
-  let bw = availW, bh = bw / aspect;
-  if (bh > availH) { bh = availH; bw = bh * aspect; }
-  bw = Math.floor(bw); bh = Math.floor(bh);
-
-  cam.boardW = bw;
-  cam.boardH = bh;
-  cam.boardX = Math.floor((iw - bw) / 2);
-  cam.boardY = Math.floor((ih - bh) / 2);
-  cam.zoom = bw / G.worldW;     // board is 16:9, world is 16:9 -> uniform scale
   cam.dpr = dpr;
   cam.cssW = iw;
   cam.cssH = ih;
+  cam.zoom = Math.max(iw / G.worldW, ih / G.worldH);   // cover the viewport
 
   canvas.style.width = `${iw}px`;
   canvas.style.height = `${ih}px`;
@@ -1080,11 +1042,11 @@ function resize() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // HUD hugs the board (timer + leaderboard sit at the platform corners).
-  els.hud.style.left = `${cam.boardX}px`;
-  els.hud.style.top = `${cam.boardY}px`;
-  els.hud.style.width = `${bw}px`;
-  els.hud.style.height = `${bh}px`;
+  // HUD spans the whole viewport (timer, mute, ranking bar overlay the game).
+  els.hud.style.left = '0px';
+  els.hud.style.top = '0px';
+  els.hud.style.width = `${iw}px`;
+  els.hud.style.height = `${ih}px`;
 }
 window.addEventListener('resize', resize);
 
@@ -1122,12 +1084,12 @@ function renderStats() {
 }
 
 function syncSoundUI() {
-  const muted = GameAudio ? GameAudio.isMuted() : (Store ? Store.getAudio().muted : false);
-  if (els.muteBtn) {
-    els.muteBtn.textContent = muted ? '🔇' : '🔊';
-    els.muteBtn.setAttribute('aria-pressed', String(muted));
-  }
+  const a = Store ? Store.getAudio() : { muted: false, volume: 0.7 };
+  const muted = GameAudio ? GameAudio.isMuted() : a.muted;
+  const vol = GameAudio ? GameAudio.getVolume() : a.volume;
   if (els.soundToggle) els.soundToggle.textContent = `Sound: ${muted ? 'Off' : 'On'}`;
+  if (els.soundToggleIngame) els.soundToggleIngame.textContent = muted ? 'Off' : 'On';
+  if (els.volSlider) els.volSlider.value = String(Math.round(vol * 100));
 }
 
 function toggleSound() {
@@ -1135,6 +1097,20 @@ function toggleSound() {
   if (GameAudio) { GameAudio.unlock(); GameAudio.setMuted(muted); }
   if (Store) Store.setAudio({ muted });
   syncSoundUI();
+}
+
+function setVolume(pct) {
+  const v = Math.max(0, Math.min(1, pct / 100));
+  if (GameAudio) { GameAudio.unlock(); GameAudio.setVolume(v); if (v > 0 && GameAudio.isMuted()) GameAudio.setMuted(false); }
+  if (Store) Store.setAudio({ volume: v, ...(v > 0 ? { muted: false } : {}) });
+  syncSoundUI();
+}
+
+function toggleSettings(force) {
+  if (!els.settingsMenu || !els.settingsBtn) return;
+  const open = force != null ? force : els.settingsMenu.classList.contains('hidden');
+  els.settingsMenu.classList.toggle('hidden', !open);
+  els.settingsBtn.setAttribute('aria-expanded', String(open));
 }
 
 // Hide the in-game HUD on the menu so the background is a clean attract-mode game.
@@ -1173,9 +1149,15 @@ function leaveToMenu() {
 }
 
 if (els.startForm) els.startForm.addEventListener('submit', (e) => { e.preventDefault(); startPlay(); });
-if (els.muteBtn) els.muteBtn.addEventListener('click', toggleSound);
 if (els.soundToggle) els.soundToggle.addEventListener('click', toggleSound);
 if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', leaveToMenu);
+
+// Settings dropdown (gear at the bar's left edge).
+if (els.settingsBtn) els.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
+if (els.soundToggleIngame) els.soundToggleIngame.addEventListener('click', toggleSound);
+if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Number(els.volSlider.value)));
+if (els.settingsMenu) els.settingsMenu.addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', () => toggleSettings(false));   // click outside closes it
 
 // ---- Boot -------------------------------------------------------------------
 resize();
