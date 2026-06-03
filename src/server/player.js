@@ -15,10 +15,19 @@ class Player {
     this.mx = 0;
     this.my = 0;
     this.boostUntil = 0;
+    this.slowUntil = 0;
     this.frozenUntil = 0;
     this.noPaintUntil = 0;
+    this.erasingUntil = 0;
+    this.brushScaleUntil = 0;
+    this.brushScale = 1;
     this.castType = null;
     this.castUntil = 0;
+    this.prevX = 0;
+    this.prevY = 0;
+    this.isEcho = false;
+    this.ownerId = 0;
+    this.echoExpiresAt = 0;
     this.alive = true;
   }
 

@@ -53,24 +53,75 @@ const POWERUP_EFFECT_MS = 4_000;
 const POWERUP_MAX = 2;
 const POWERUP_SPAWN_MS = 13_000;
 const POWERUP_TTL_MS = 6_000;
-const POWERUP_R = 18;
-// Powerups spawn at a candidate point well away from the pack (open ground, fair
-// race) but with NOISE: we sample many candidates, then pick randomly among the
-// TOP_K most-open ones, so a lone player can't camp empty space for guaranteed
-// pickups.
+const POWERUP_R = 28;
+// Powerups spawn at a uniformly RANDOM point -- NOT biased toward open ground,
+// which a player could game by drifting away from the pack to farm the "far from
+// everyone" pickups. Truly random by default (CLEAR_R = 0). Raising CLEAR_R rejects
+// spots within that radius of a player (avoids a freebie spawned at someone's feet)
+// but reintroduces a slight bias AWAY from clustered players, so keep it small or 0.
+// TRIES caps the rejection-sampling attempts.
 const POWERUP_SPAWN_TRIES = 56;
-const POWERUP_SPAWN_TOPK = 12;
+const POWERUP_SPAWN_CLEAR_R = 0;
 const BOOST_MS = POWERUP_EFFECT_MS;
 const BOOST_MULT = 1.8;
+const SLOW_MS = POWERUP_EFFECT_MS;
+const SLOW_MULT = 0.45;
 const FREEZE_MS = POWERUP_EFFECT_MS;
 const INKJAM_MS = POWERUP_EFFECT_MS;
+const MEGA_BRUSH_MS = POWERUP_EFFECT_MS;
+const MEGA_BRUSH_MULT = 1.55;
+const TINY_BRUSH_MS = POWERUP_EFFECT_MS;
+const TINY_BRUSH_MULT = 0.55;
+const ERASE_MS = 3_000;
+const ECHO_MS = 8_000;
+const SELF_FREEZE_MS = 2_500;
+const SELF_INKJAM_MS = 3_000;
 
 const MISSILE_COUNT = 12;
+const BAD_MISSILE_COUNT = 8;
 const MISSILE_DELAY_MS = 200;
 const MISSILE_INTERVAL_MS = Math.floor((POWERUP_EFFECT_MS - MISSILE_DELAY_MS) / (MISSILE_COUNT - 1));
 const CRATER_R = 36;
 
-const POWERUP_TYPES = ['speed', 'freeze', 'inkjam', 'missile'];
+const POWERUP_TYPES = [
+  'speed',
+  'freeze',
+  'inkjam',
+  'missile',
+  'mega',
+  'echo',
+  'erase',
+  'slow',
+  'selfFreeze',
+  'selfInkjam',
+  'badMissile',
+  'tiny',
+];
+// Good powers are intentionally more common than bad powers; bad powers exist to
+// make shuffled pickups risky, not to make most races feel like punishment.
+const POWERUP_SPAWN_POOL = [
+  'speed', 'speed',
+  'freeze', 'freeze',
+  'inkjam', 'inkjam',
+  'missile', 'missile',
+  'mega', 'mega',
+  'echo', 'echo',
+  'erase', 'erase',
+  'slow',
+  'selfFreeze',
+  'selfInkjam',
+  'badMissile',
+  'tiny',
+];
+// Every powerup cycles its type at least once (the "twist"): weights sum to 1, so
+// changes:0 never comes up. Skewed toward more flips -- about half change twice or
+// more, and a few are frantic 3-4x changers.
+const POWERUP_SWITCH_CHANCES = [
+  { changes: 1, weight: 0.50 },
+  { changes: 2, weight: 0.30 },
+  { changes: 3, weight: 0.15 },
+  { changes: 4, weight: 0.05 },
+];
 
 // One color per slot (MAX_PLAYERS). These six are the most mutually distinct of
 // the old set -- the dropped pink/blue read too close to red/purple at speed.
@@ -129,16 +180,29 @@ module.exports = {
   POWERUP_TTL_MS,
   POWERUP_R,
   POWERUP_SPAWN_TRIES,
-  POWERUP_SPAWN_TOPK,
+  POWERUP_SPAWN_CLEAR_R,
   BOOST_MS,
   BOOST_MULT,
+  SLOW_MS,
+  SLOW_MULT,
   FREEZE_MS,
   INKJAM_MS,
+  MEGA_BRUSH_MS,
+  MEGA_BRUSH_MULT,
+  TINY_BRUSH_MS,
+  TINY_BRUSH_MULT,
+  ERASE_MS,
+  ECHO_MS,
+  SELF_FREEZE_MS,
+  SELF_INKJAM_MS,
   MISSILE_COUNT,
+  BAD_MISSILE_COUNT,
   MISSILE_DELAY_MS,
   MISSILE_INTERVAL_MS,
   CRATER_R,
   POWERUP_TYPES,
+  POWERUP_SPAWN_POOL,
+  POWERUP_SWITCH_CHANCES,
   PALETTE,
   SPAWNS,
 };

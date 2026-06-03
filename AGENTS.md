@@ -15,7 +15,7 @@ These instructions apply to the whole repository.
 
 - Runtime art lives in `public/assets/`.
 - Brush sprite atlas geometry is `8 x 9` cells, `192 x 208` each. Keep the final atlas `1536 x 1872`.
-- Power-up sheet geometry is `4 x 3` cells, `362 x 362` each. Runtime currently uses the active row only.
+- Power-up sheet geometry is `12 x 2` cells, `362 x 362` each. Row 0 is active art; row 1 is gray disabled/fade art. There is no unused burst row.
 - For generated brush sprites, use the same hatch-pet/imagegen workflow that produced the accepted old atlas. Do not replace expressive generated rows with deterministic transforms unless explicitly requested.
 - Before committing/reusing raster assets, validate dimensions and alpha. Transparent pixels should not contain visible RGB residue.
 - Preserve accepted assets while iterating. Write candidates to temp or a new file first; replace runtime assets only after visual comparison.

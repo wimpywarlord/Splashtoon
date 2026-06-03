@@ -35,16 +35,29 @@ const {
   POWERUP_TTL_MS,
   POWERUP_R,
   POWERUP_SPAWN_TRIES,
-  POWERUP_SPAWN_TOPK,
+  POWERUP_SPAWN_CLEAR_R,
   BOOST_MS,
   BOOST_MULT,
+  SLOW_MS,
+  SLOW_MULT,
   FREEZE_MS,
   INKJAM_MS,
+  MEGA_BRUSH_MS,
+  MEGA_BRUSH_MULT,
+  TINY_BRUSH_MS,
+  TINY_BRUSH_MULT,
+  ERASE_MS,
+  ECHO_MS,
+  SELF_FREEZE_MS,
+  SELF_INKJAM_MS,
   MISSILE_COUNT,
+  BAD_MISSILE_COUNT,
   MISSILE_DELAY_MS,
   MISSILE_INTERVAL_MS,
   CRATER_R,
   POWERUP_TYPES,
+  POWERUP_SPAWN_POOL,
+  POWERUP_SWITCH_CHANCES,
   PALETTE,
   SPAWNS,
   COARSE_ZW,
@@ -60,6 +73,66 @@ function now() {
 // not per tick, so snapshot size is independent of the sim rate.
 const VIS_STROKE_MIN = BRUSH_R * 0.75;
 const VIS_STROKE_MIN2 = VIS_STROKE_MIN * VIS_STROKE_MIN;
+const VIS_TRAIL_W_PER_R = 26 / BRUSH_R;
+
+function pickWeightedPowerupType(exclude = null) {
+  let type = exclude;
+  for (let guard = 0; guard < 8 && type === exclude; guard++) {
+    type = POWERUP_SPAWN_POOL[Math.floor(Math.random() * POWERUP_SPAWN_POOL.length)];
+  }
+  if (type === exclude) {
+    const alts = POWERUP_TYPES.filter((t) => t !== exclude);
+    type = alts[Math.floor(Math.random() * alts.length)] || exclude;
+  }
+  return type;
+}
+
+function pickPowerupSwitchCount() {
+  let r = Math.random();
+  for (const entry of POWERUP_SWITCH_CHANCES) {
+    if (r < entry.weight) return entry.changes;
+    r -= entry.weight;
+  }
+  return 0;
+}
+
+function makePowerupSwitches(spawnedAt, count) {
+  if (!count) return [];
+  // The type flips at random moments across the powerup's visible life rather than
+  // at fixed, evenly-spaced points -- you can't anticipate the twist. Stay clear of
+  // the spawn strike (early) and the expiry (late), and keep flips far enough apart
+  // that each one still reads distinctly.
+  const minT = 500;                        // after the spawn lightning settles
+  const maxT = POWERUP_TTL_MS - 550;       // before it expires
+  const minGap = 600;                      // visible separation between flips
+  const times = [];
+  for (let attempt = 0; attempt < 40 && times.length < count; attempt++) {
+    const cand = minT + Math.random() * (maxT - minT);
+    if (times.every((u) => Math.abs(u - cand) >= minGap)) times.push(cand);
+  }
+  while (times.length < count) {           // rare: window too tight -> space the rest out
+    times.push(minT + (maxT - minT) * ((times.length + 1) / (count + 1)));
+  }
+  times.sort((a, b) => a - b);
+  return times.map((u) => Math.round(spawnedAt + u));
+}
+
+function closestPointDist2(ax, ay, bx, by, px, py) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 0.0001) {
+    const x = px - bx;
+    const y = py - by;
+    return x * x + y * y;
+  }
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  const cx = ax + dx * t;
+  const cy = ay + dy * t;
+  const x = px - cx;
+  const y = py - cy;
+  return x * x + y * y;
+}
 
 // Clean a client-supplied display name: bound length, drop control chars and
 // markup so it is safe to render and can't be confused with structure.
@@ -86,6 +159,7 @@ class Room {
     this.lastSpawnAt = 0;
     this.pendingImpacts = [];
     this.visualPaintEvents = [];
+    this.echoIds = new Set();
     this.emptyAt = 0;              // when the last human left (for reaping)
     // Coarse "opportunity grid" the bots steer by (rebuilt on an interval).
     this.coarseBlank = null;      // Int16Array[zones]: unpainted cells per zone
@@ -176,10 +250,16 @@ class Room {
     p.mx = 0;
     p.my = 0;
     p.boostUntil = 0;
+    p.slowUntil = 0;
     p.frozenUntil = 0;
     p.noPaintUntil = 0;
+    p.erasingUntil = 0;
+    p.brushScaleUntil = 0;
+    p.brushScale = 1;
     p.castType = null;
     p.castUntil = 0;
+    p.prevX = p.x;
+    p.prevY = p.y;
     p.visAnchorX = undefined;
     p.visAnchorY = undefined;
   }
@@ -213,6 +293,16 @@ class Room {
     this.changed.add(idx);
   }
 
+  clearCell(cx, cy) {
+    if (cx < 0 || cy < 0 || cx >= GRID_W || cy >= GRID_H) return;
+    const idx = cy * GRID_W + cx;
+    const prev = this.grid[idx];
+    if (prev === EMPTY) return;
+    this.scores[prev]--;
+    this.grid[idx] = EMPTY;
+    this.changed.add(idx);
+  }
+
   fillDisc(wx, wy, rPx, slot) {
     const ccx = wx / CELL;
     const ccy = wy / CELL;
@@ -231,22 +321,51 @@ class Room {
     }
   }
 
-  stampDisc(wx, wy, slot) {
-    this.fillDisc(wx, wy, BRUSH_R, slot);
-  }
-
-  paintPath(px, py, cx, cy, slot) {
-    const dx = cx - px;
-    const dy = cy - py;
-    const dist = Math.hypot(dx, dy);
-    const steps = Math.max(1, Math.ceil(dist / STAMP_STEP));
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      this.stampDisc(px + dx * t, py + dy * t, slot);
+  clearDisc(wx, wy, rPx) {
+    const ccx = wx / CELL;
+    const ccy = wy / CELL;
+    const rc = rPx / CELL;
+    const r2 = rc * rc;
+    const minX = Math.floor(ccx - rc);
+    const maxX = Math.ceil(ccx + rc);
+    const minY = Math.floor(ccy - rc);
+    const maxY = Math.ceil(ccy + rc);
+    for (let cy = minY; cy <= maxY; cy++) {
+      for (let cx = minX; cx <= maxX; cx++) {
+        const dx = cx + 0.5 - ccx;
+        const dy = cy + 0.5 - ccy;
+        if (dx * dx + dy * dy <= r2) this.clearCell(cx, cy);
+      }
     }
   }
 
-  recordPaintStroke(px, py, cx, cy, slot) {
+  stampDisc(wx, wy, slot, rPx = BRUSH_R) {
+    this.fillDisc(wx, wy, rPx, slot);
+  }
+
+  paintPath(px, py, cx, cy, slot, rPx = BRUSH_R) {
+    const dx = cx - px;
+    const dy = cy - py;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(dist / Math.max(4, rPx / 2, STAMP_STEP)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      this.stampDisc(px + dx * t, py + dy * t, slot, rPx);
+    }
+  }
+
+  erasePath(px, py, cx, cy, rPx = BRUSH_R) {
+    const dx = cx - px;
+    const dy = cy - py;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(dist / Math.max(4, rPx / 2, STAMP_STEP)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      this.clearDisc(px + dx * t, py + dy * t, rPx);
+    }
+  }
+
+  recordPaintStroke(px, py, cx, cy, slot, rPx = BRUSH_R, erase = false) {
     const dx = cx - px;
     const dy = cy - py;
     const d2 = dx * dx + dy * dy;
@@ -258,6 +377,8 @@ class Room {
       y1: Math.round(py),
       x2: Math.round(cx),
       y2: Math.round(cy),
+      w: Math.round(rPx * VIS_TRAIL_W_PER_R),
+      erase,
     });
   }
 
@@ -300,16 +421,29 @@ class Room {
   }
 
   // ---- simulation -----------------------------------------------------------
+  brushRadius(p, t) {
+    const scale = (t < p.brushScaleUntil && p.brushScale > 0) ? p.brushScale : 1;
+    return BRUSH_R * scale;
+  }
+
+  brushScale(p, t) {
+    return this.brushRadius(p, t) / BRUSH_R;
+  }
+
   stepPlayer(p, dt) {
     const t = now();
+    p.prevX = p.x;
+    p.prevY = p.y;
     if (t < p.frozenUntil) {
       p.vx = 0;
       p.vy = 0;
       return;
     }
-    const boosted = t < p.boostUntil;
-    const accel = boosted ? ACCEL * BOOST_MULT : ACCEL;
-    const maxSpeed = boosted ? MAX_SPEED * BOOST_MULT : MAX_SPEED;
+    let speedMult = 1;
+    if (t < p.boostUntil) speedMult *= BOOST_MULT;
+    if (t < p.slowUntil) speedMult *= SLOW_MULT;
+    const accel = ACCEL * speedMult;
+    const maxSpeed = MAX_SPEED * speedMult;
 
     if (p.mx || p.my) {
       const len = Math.hypot(p.mx, p.my);
@@ -338,19 +472,26 @@ class Room {
     if (p.y < BRUSH_R) { p.y = BRUSH_R; if (p.vy < 0) p.vy = 0; }
     if (p.y > WORLD_H - BRUSH_R) { p.y = WORLD_H - BRUSH_R; if (p.vy > 0) p.vy = 0; }
 
-    if (t < p.noPaintUntil) return;
+    if (t < p.noPaintUntil) {
+      p.visAnchorX = p.x;
+      p.visAnchorY = p.y;
+      return;
+    }
     const pdx = p.x - px;
     const pdy = p.y - py;
     if (pdx * pdx + pdy * pdy < MIN_PAINT_MOVE2) return;
 
     // Grid paint every step (authoritative coverage). Visual replay strokes are
     // coalesced by distance so their count doesn't scale with the sim rate.
-    this.paintPath(px, py, p.x, p.y, p.slot);
+    const brushR = this.brushRadius(p, t);
+    const erasing = t < p.erasingUntil;
+    if (erasing) this.erasePath(px, py, p.x, p.y, brushR);
+    else this.paintPath(px, py, p.x, p.y, p.slot, brushR);
     if (p.visAnchorX === undefined) { p.visAnchorX = px; p.visAnchorY = py; }
     const vdx = p.x - p.visAnchorX;
     const vdy = p.y - p.visAnchorY;
     if (vdx * vdx + vdy * vdy >= VIS_STROKE_MIN2) {
-      this.recordPaintStroke(p.visAnchorX, p.visAnchorY, p.x, p.y, p.slot);
+      this.recordPaintStroke(p.visAnchorX, p.visAnchorY, p.x, p.y, p.slot, brushR, erasing);
       p.visAnchorX = p.x;
       p.visAnchorY = p.y;
     }
@@ -359,54 +500,186 @@ class Room {
   spawnPowerup() {
     const t = now();
     const margin = 90;
-    // Favor open ground (far from the nearest player) for a fair race, but add
-    // noise: rank candidates by that distance and pick randomly among the top K,
-    // so a lone player can't camp empty space for guaranteed pickups.
+    // Uniformly RANDOM spawn -- not biased toward open ground (which a player could
+    // game by drifting away from the pack to farm "far from everyone" pickups). We
+    // only reject spots within POWERUP_SPAWN_CLEAR_R of a player so nobody gets a
+    // freebie spawned at their feet; beyond that it's pure chance, fair regardless
+    // of position.
     const actives = [];
     for (const p of this.players.values()) if (p.slot >= 0) actives.push(p);
-    const cand = [];
+    const clearR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
+    let px = 0, py = 0;
     for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
+      px = margin + Math.random() * (WORLD_W - 2 * margin);
+      py = margin + Math.random() * (WORLD_H - 2 * margin);
+      let clear = true;
+      for (const p of actives) {
+        const dx = p.x - px, dy = p.y - py;
+        if (dx * dx + dy * dy < clearR2) { clear = false; break; }
+      }
+      if (clear) break;   // accept first spot clear of everyone (else keep last sampled)
+    }
+    const changes = pickPowerupSwitchCount();
+    const type = pickWeightedPowerupType();
+    this.powerups.push({
+      id: this.nextPowerupId++,
+      x: Math.round(px),
+      y: Math.round(py),
+      type,
+      expiresAt: t + POWERUP_TTL_MS,
+      switches: makePowerupSwitches(t, changes),
+      switchIndex: 0,
+    });
+  }
+
+  updatePowerupSwitches(t) {
+    for (const pu of this.powerups) {
+      while (pu.switches && pu.switchIndex < pu.switches.length && t >= pu.switches[pu.switchIndex]) {
+        pu.type = pickWeightedPowerupType(pu.type);
+        pu.switchIndex++;
+      }
+    }
+  }
+
+  publicPowerups() {
+    return this.powerups.map((pu) => ({
+      id: pu.id,
+      x: pu.x,
+      y: pu.y,
+      type: pu.type,
+      expiresAt: pu.expiresAt,
+    }));
+  }
+
+  powerupHit(p, pu, reach) {
+    const ax = Number.isFinite(p.prevX) ? p.prevX : p.x;
+    const ay = Number.isFinite(p.prevY) ? p.prevY : p.y;
+    return closestPointDist2(ax, ay, p.x, p.y, pu.x, pu.y) <= reach * reach;
+  }
+
+  opponentSlots(slot) {
+    const slots = [];
+    const seen = new Set();
+    for (const p of this.players.values()) {
+      if (p.slot < 0 || p.slot === slot || seen.has(p.slot)) continue;
+      seen.add(p.slot);
+      slots.push(p.slot);
+    }
+    return slots;
+  }
+
+  scheduleMissiles(slot, t, count = MISSILE_COUNT, around = null) {
+    const m = 60;
+    for (let i = 0; i < count; i++) {
+      let x;
+      let y;
+      if (around) {
+        const a = Math.random() * Math.PI * 2;
+        const d = 35 + Math.random() * 210;
+        x = Math.max(m, Math.min(WORLD_W - m, around.x + Math.cos(a) * d));
+        y = Math.max(m, Math.min(WORLD_H - m, around.y + Math.sin(a) * d));
+      } else {
+        x = m + Math.random() * (WORLD_W - 2 * m);
+        y = m + Math.random() * (WORLD_H - 2 * m);
+      }
+      this.pendingImpacts.push({
+        at: t + MISSILE_DELAY_MS + i * MISSILE_INTERVAL_MS,
+        x: Math.round(x),
+        y: Math.round(y),
+        slot,
+      });
+    }
+  }
+
+  spawnEcho(owner, t) {
+    const margin = BRUSH_R * 4;
+    const echo = new Player(this.manager.allocId(), null);
+    echo.isBot = true;
+    echo.isEcho = true;
+    echo.ownerId = owner.id;
+    echo.name = owner.name;
+    echo.slot = owner.slot;
+    echo.ai = createBotAI();
+    echo.echoExpiresAt = t + ECHO_MS;
+
+    let best = null;
+    for (let i = 0; i < 24; i++) {
       const x = margin + Math.random() * (WORLD_W - 2 * margin);
       const y = margin + Math.random() * (WORLD_H - 2 * margin);
-      let minD = Infinity;
-      for (const p of actives) {
-        const d = Math.hypot(p.x - x, p.y - y);
-        if (d < minD) minD = d;
-      }
-      cand.push({ x, y, minD: minD === Infinity ? 0 : minD });
+      const dOwner = Math.hypot(x - owner.x, y - owner.y);
+      if (!best || dOwner > best.dOwner) best = { x, y, dOwner };
     }
-    cand.sort((a, b) => b.minD - a.minD);
-    const pick = cand[Math.floor(Math.random() * Math.min(POWERUP_SPAWN_TOPK, cand.length))];
-    const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-    this.powerups.push({ id: this.nextPowerupId++, x: Math.round(pick.x), y: Math.round(pick.y), type, expiresAt: t + POWERUP_TTL_MS });
+
+    echo.x = Math.round(best.x);
+    echo.y = Math.round(best.y);
+    echo.prevX = echo.x;
+    echo.prevY = echo.y;
+    this.players.set(echo.id, echo);
+    this.echoIds.add(echo.id);
+  }
+
+  removeExpiredEchoes(t) {
+    if (!this.echoIds.size) return;
+    for (const id of [...this.echoIds]) {
+      const p = this.players.get(id);
+      if (!p || t >= p.echoExpiresAt || p.slot < 0) {
+        this.players.delete(id);
+        this.echoIds.delete(id);
+      }
+    }
+  }
+
+  removeAllEchoes() {
+    for (const id of this.echoIds) this.players.delete(id);
+    this.echoIds.clear();
   }
 
   applyPowerup(p, type, t) {
     if (type === 'speed') {
       p.boostUntil = t + BOOST_MS;
+    } else if (type === 'slow') {
+      p.slowUntil = t + SLOW_MS;
     } else if (type === 'freeze') {
       p.castType = type;
       p.castUntil = t + POWERUP_EFFECT_MS;
       for (const o of this.players.values()) {
-        if (o.slot < 0 || o === p) continue;
+        if (o.slot < 0 || o.slot === p.slot) continue;
         o.frozenUntil = t + FREEZE_MS;
       }
+    } else if (type === 'selfFreeze') {
+      p.frozenUntil = t + SELF_FREEZE_MS;
     } else if (type === 'inkjam') {
       for (const o of this.players.values()) {
-        if (o.slot < 0 || o === p) continue;
+        if (o.slot < 0 || o.slot === p.slot) continue;
         o.noPaintUntil = t + INKJAM_MS;
       }
+    } else if (type === 'selfInkjam') {
+      p.noPaintUntil = t + SELF_INKJAM_MS;
     } else if (type === 'missile') {
       p.castType = type;
       p.castUntil = t + POWERUP_EFFECT_MS;
-      const m = 60;
-      for (let i = 0; i < MISSILE_COUNT; i++) {
-        this.pendingImpacts.push({
-          at: t + MISSILE_DELAY_MS + i * MISSILE_INTERVAL_MS,
-          x: Math.round(m + Math.random() * (WORLD_W - 2 * m)),
-          y: Math.round(m + Math.random() * (WORLD_H - 2 * m)),
-          slot: p.slot,
-        });
+      this.scheduleMissiles(p.slot, t, MISSILE_COUNT);
+    } else if (type === 'badMissile') {
+      const slots = this.opponentSlots(p.slot);
+      if (slots.length) {
+        for (let i = 0; i < BAD_MISSILE_COUNT; i++) {
+          this.scheduleMissiles(slots[i % slots.length], t + i * 35, 1, { x: p.x, y: p.y });
+        }
+      }
+    } else if (type === 'mega') {
+      p.brushScale = MEGA_BRUSH_MULT;
+      p.brushScaleUntil = t + MEGA_BRUSH_MS;
+    } else if (type === 'tiny') {
+      p.brushScale = TINY_BRUSH_MULT;
+      p.brushScaleUntil = t + TINY_BRUSH_MS;
+    } else if (type === 'echo') {
+      this.spawnEcho(p, t);
+    } else if (type === 'erase') {
+      p.castType = type;
+      p.castUntil = t + ERASE_MS;
+      for (const o of this.players.values()) {
+        if (o.slot < 0 || o.slot === p.slot) continue;
+        o.erasingUntil = t + ERASE_MS;
       }
     }
   }
@@ -428,6 +701,7 @@ class Room {
   }
 
   updatePowerups(t) {
+    this.updatePowerupSwitches(t);
     if (this.powerups.length) {
       this.powerups = this.powerups.filter((pu) => t < pu.expiresAt);
     }
@@ -437,10 +711,10 @@ class Room {
     }
     const reach = POWERUP_R + BRUSH_R;
     for (const p of this.players.values()) {
-      if (p.slot < 0) continue;
+      if (p.slot < 0 || p.isEcho) continue;
       for (let i = this.powerups.length - 1; i >= 0; i--) {
         const pu = this.powerups[i];
-        if (Math.hypot(p.x - pu.x, p.y - pu.y) <= reach) {
+        if (this.powerupHit(p, pu, reach)) {
           this.powerups.splice(i, 1);
           this.applyPowerup(p, pu.type, t);
           this.broadcast({ t: 'pickup', id: p.id, slot: p.slot, type: pu.type, x: pu.x, y: pu.y });
@@ -451,6 +725,7 @@ class Room {
 
   // ---- round lifecycle ------------------------------------------------------
   startRound() {
+    this.removeAllEchoes();
     this.grid.fill(EMPTY);
     this.scores.fill(0);
     this.changed.clear();
@@ -471,6 +746,7 @@ class Room {
   }
 
   endRound() {
+    this.removeAllEchoes();
     let best = -1;
     let bestScore = 0;
     let tie = false;
@@ -507,6 +783,7 @@ class Room {
   tick(dt, doBroadcast) {
     const t = now();
     if (this.phase === 'active') {
+      this.removeExpiredEchoes(t);
       if (t - this.lastCoarseAt >= BOT_COARSE_MS) { this.recomputeCoarse(); this.lastCoarseAt = t; }
       for (const p of this.players.values()) {
         if (p.slot < 0) continue;
@@ -556,8 +833,11 @@ class Room {
           x: Math.round(p.x),
           y: Math.round(p.y),
           boost: t < p.boostUntil,
+          slow: t < p.slowUntil,
           frozen: t < p.frozenUntil,
           noPaint: t < p.noPaintUntil,
+          erasing: t < p.erasingUntil,
+          paintScale: this.brushScale(p, t),
           castType,
           inputActive: !!(p.mx || p.my),
         });
@@ -590,7 +870,7 @@ class Room {
       players: this.playerList(),
       paintEvents: this.visualPaintEvents,
       scores: this.scoreArray(),
-      powerups: this.powerups,
+      powerups: this.publicPowerups(),
       timeLeftMs: this.timeLeftMs(),
       phase: this.phase,
     };
@@ -633,7 +913,7 @@ class Room {
       t: 'state',
       players: this.playerList(),
       scores: this.scoreArray(),
-      powerups: this.powerups,
+      powerups: this.publicPowerups(),
       timeLeftMs: Math.round(tLeft),
       phase: this.phase,
     };

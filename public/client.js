@@ -9,6 +9,7 @@ const {
   MAX_SPEED,
   ACCEL,
   BOOST_MULT,
+  SLOW_MULT,
   DAMPING_PER_SEC,
   BRUSH_R,
   MOVE_EPS,
@@ -38,12 +39,12 @@ petSheet.src = '/assets/brush-spirit.png';
 const tintedSheets = {};       // slot -> recolored <canvas>
 let snapshotStamps = [];       // slot -> small rounded cell stamp for grid snapshots
 
-// Runtime intentionally uses only the base powerup row; pickup feedback is a
-// clean fade-out, not a burst/expansion animation.
+// Runtime uses the active row for board pickups and the disabled gray row for
+// pickup fade-out; the old burst row was removed from the atlas.
 const powerupSheet = new Image();
 let powerupReady = false;
 powerupSheet.onload = () => { powerupReady = true; };
-powerupSheet.src = '/assets/powerups.png';
+powerupSheet.src = '/assets/powerups.png?v=powerups-12x2-r5';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -108,12 +109,18 @@ const rankChips = new Map(); // slot -> ranking-bar chip element (persistent for
 const remote = new Map();
 
 // Own predicted brush.
-const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, dirAngle: 0, speed: 0, inputActive: false, boost: false, frozen: false, noPaint: false, castType: null };
+const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, dirAngle: 0, speed: 0, inputActive: false, boost: false, slow: false, frozen: false, noPaint: false, erasing: false, paintScale: 1, castType: null };
 
 // Active powerups on the board, transient render effects, and animation clock.
 let powerups = [];
 let impacts = [];          // meteor impact rings being animated: [{x,y,r,slot,start}]
 let pickupFades = [];      // fading pickup icons: [{x,y,type,start}]
+// Per-powerup transient render FX keyed by server id (spawn pop, lightning strike,
+// icon-switch flip). announcedPu gates the one-shot spawn sound to genuinely new
+// powerups (seeded on join/round so existing ones don't all chime at once).
+const puFx = new Map();
+let announcedPu = new Set();
+const BOLT_MS = 360;       // lightning-strike duration on spawn
 let nowMs = 0;
 
 // Paint layer at grid resolution (1px per cell), scaled up on draw.
@@ -186,6 +193,7 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
+      announcedPu = new Set(powerups.map((p) => p.id));   // seed: don't chime on join
       impacts = [];
       pickupFades = [];
       applySnapshot(msg.cells, msg.paintEvents || []);
@@ -202,6 +210,7 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
+      announcePowerupSpawns();
       // Visual paint is drawn locally as smooth strokes (see paintTrails);
       // server deltas are ignored for rendering. Scores stay authoritative.
       applyPlayers(msg.players, false);
@@ -217,6 +226,7 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
+      announcedPu = new Set(powerups.map((p) => p.id));   // seed: don't chime on resync
       applySnapshot(msg.cells, msg.paintEvents || []);
       applyPlayers(msg.players, true);   // snap render+target to the authoritative now
       resetTrailAnchors();               // re-seed anchors so no catch-up smear is drawn
@@ -276,8 +286,11 @@ function applyPlayers(list, snap) {
       foundMe = true;
       mySlot = pl.slot;
       me.boost = !!pl.boost;
+      me.slow = !!pl.slow;
       me.frozen = !!pl.frozen;
       me.noPaint = !!pl.noPaint;
+      me.erasing = !!pl.erasing;
+      me.paintScale = Number.isFinite(pl.paintScale) ? pl.paintScale : 1;
       me.castType = pl.castType || null;
       me.inputActive = !!pl.inputActive;
       if (!me.has) {            // first authoritative position -> adopt it
@@ -292,14 +305,17 @@ function applyPlayers(list, snap) {
     if (!r) {
       r = {
         slot: pl.slot, rx: pl.x, ry: pl.y, tx: pl.x, ty: pl.y,
-        face: 1, dirAngle: 0, speed: 0, inputActive: false, boost: false, frozen: false, noPaint: false, castType: null,
+        face: 1, dirAngle: 0, speed: 0, inputActive: false, boost: false, slow: false, frozen: false, noPaint: false, erasing: false, paintScale: 1, castType: null,
       };
       remote.set(pl.id, r);
     }
     r.slot = pl.slot;
     r.boost = !!pl.boost;
+    r.slow = !!pl.slow;
     r.frozen = !!pl.frozen;
     r.noPaint = !!pl.noPaint;
+    r.erasing = !!pl.erasing;
+    r.paintScale = Number.isFinite(pl.paintScale) ? pl.paintScale : 1;
     r.castType = pl.castType || null;
     r.inputActive = !!pl.inputActive;
     // Estimate speed + left/right facing from server position deltas.
@@ -366,12 +382,20 @@ function replayPaintEvents(events) {
     const slot = ev.slot;
     const col = palette[slot] || '#fff';
     if (ev.t === 'stroke') {
-      paintCtx.strokeStyle = col;
-      paintCtx.lineWidth = TRAIL_W;
+      const w = Number.isFinite(ev.w) ? ev.w : TRAIL_W;
+      if (ev.erase) {
+        paintCtx.save();
+        paintCtx.globalCompositeOperation = 'destination-out';
+        paintCtx.strokeStyle = 'rgba(0,0,0,1)';
+      } else {
+        paintCtx.strokeStyle = col;
+      }
+      paintCtx.lineWidth = w;
       paintCtx.beginPath();
       paintCtx.moveTo(ev.x1, ev.y1);
       paintCtx.lineTo(ev.x2, ev.y2);
       paintCtx.stroke();
+      if (ev.erase) paintCtx.restore();
     } else if (ev.t === 'disc') {
       drawPaintDisc(ev.x, ev.y, ev.r, slot);
     } else if (ev.t === 'splatter') {
@@ -462,12 +486,20 @@ function strokeSeg(b, slot, cx, cy) {
   const d2 = dx * dx + dy * dy;
   if (d2 < 0.4) return;
   if (d2 < 90 * 90) {            // skip teleports (respawn)
-    paintCtx.strokeStyle = palette[slot] || '#fff';
-    paintCtx.lineWidth = TRAIL_W;
+    const w = TRAIL_W * (Number.isFinite(b.paintScale) ? b.paintScale : 1);
+    if (b.erasing) {
+      paintCtx.save();
+      paintCtx.globalCompositeOperation = 'destination-out';
+      paintCtx.strokeStyle = 'rgba(0,0,0,1)';
+    } else {
+      paintCtx.strokeStyle = palette[slot] || '#fff';
+    }
+    paintCtx.lineWidth = w;
     paintCtx.beginPath();
     paintCtx.moveTo(b.lastPaintX, b.lastPaintY);
     paintCtx.lineTo(cx, cy);
     paintCtx.stroke();
+    if (b.erasing) paintCtx.restore();
   }
   b.lastPaintX = cx; b.lastPaintY = cy;
 }
@@ -551,8 +583,11 @@ function predict(dt) {
   }
   const { mx, my } = currentInput();
   me.inputActive = !!(mx || my);
-  const accel = me.boost ? ACCEL * BOOST_MULT : ACCEL;
-  const maxSpeed = me.boost ? MAX_SPEED * BOOST_MULT : MAX_SPEED;
+  let speedMult = 1;
+  if (me.boost) speedMult *= BOOST_MULT;
+  if (me.slow) speedMult *= SLOW_MULT;
+  const accel = ACCEL * speedMult;
+  const maxSpeed = MAX_SPEED * speedMult;
   if (mx || my) {
     const len = Math.hypot(mx, my);   // normalize so diagonals aren't faster
     me.dirAngle = Math.atan2(my, mx);
@@ -713,7 +748,7 @@ function spriteDrawHeight(state) {
   return h;
 }
 
-function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint, castType, inputActive) {
+function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint, castType, inputActive, paintScale = 1) {
   const col = palette[slot] || '#fff';
   const state = petState(speed, boost, frozen, noPaint, castType, inputActive);
   const pose = brushPose(state, face, dirAngle);
@@ -721,7 +756,12 @@ function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen,
   const rowSt = PET.states[pose.rowState] || st;
   const ts = getTintedSheet(slot);
   if (!ts) return;
-  const drawH = spriteDrawHeight(state);
+  // Brush-size powerups (mega/tiny) visibly grow/shrink the spirit to match its
+  // brush -- near-linear so it reads clearly, lightly damped + clamped so it never
+  // gets grotesque (mega 1.55 -> ~1.45x, tiny 0.55 -> ~0.6x, normal -> 1x).
+  const ps = Number.isFinite(paintScale) ? paintScale : 1;
+  const scaleCue = Math.max(0.55, Math.min(1.5, Math.pow(ps, 0.85)));
+  const drawH = spriteDrawHeight(state) * scaleCue;
   const idleScale = drawH / PET_DRAW_H;
 
   // Colored ground glow (identity) + "you" ring.
@@ -753,7 +793,7 @@ function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen,
   ctx.restore();
 }
 
-function drawPowerupSprite(type, rowName, x, y, size, alpha = 1) {
+function drawPowerupSprite(type, rowName, x, y, size, alpha = 1, scaleX = 1, scaleY = 1) {
   if (!powerupReady) return false;
   const col = POWERUP_SHEET.cols[type] !== undefined ? POWERUP_SHEET.cols[type] : POWERUP_SHEET.cols.speed;
   const row = POWERUP_SHEET.rows[rowName] !== undefined ? POWERUP_SHEET.rows[rowName] : POWERUP_SHEET.rows.active;
@@ -762,6 +802,7 @@ function drawPowerupSprite(type, rowName, x, y, size, alpha = 1) {
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.translate(x, y);
+  if (scaleX !== 1 || scaleY !== 1) ctx.scale(scaleX, scaleY);
   ctx.drawImage(
     powerupSheet,
     sx, sy, POWERUP_SHEET.cellW, POWERUP_SHEET.cellH,
@@ -775,16 +816,163 @@ function drawPickupFade(fx) {
   const age = (nowMs - fx.start) / POWERUP_FADE_MS;
   if (age < 0 || age >= 1) return;
   const alpha = Math.pow(1 - age, 1.35);
-  drawPowerupSprite(fx.type, 'active', fx.x, fx.y, 56, alpha);
+  drawPowerupSprite(fx.type, 'disabled', fx.x, fx.y, 56, alpha);
+}
+
+// Lazily track per-powerup FX state and detect type switches. The server only
+// sends the current type, so a change here means the icon just cycled (the twist).
+function powerupFx(pu) {
+  let fx = puFx.get(pu.id);
+  if (!fx) { fx = { bornMs: nowMs, switchMs: -1e9, type: pu.type, bolt: makeBolt(pu.x, pu.y) }; puFx.set(pu.id, fx); }
+  else if (fx.type !== pu.type) { fx.type = pu.type; fx.switchMs = nowMs; }
+  return fx;
+}
+function prunePowerupFx() {
+  if (!puFx.size) return;
+  const live = new Set(powerups.map((p) => p.id));
+  for (const id of puFx.keys()) if (!live.has(id)) puFx.delete(id);
+}
+// Chime once when genuinely new powerups appear (ids not seen since the last
+// join/round seed). Pruned so the set can't grow unbounded across a long match.
+function announcePowerupSpawns() {
+  let appeared = false;
+  for (const pu of powerups) if (!announcedPu.has(pu.id)) { announcedPu.add(pu.id); appeared = true; }
+  if (appeared && phase === 'active' && GameAudio && GameAudio.powerupSpawn) GameAudio.powerupSpawn();
+  if (announcedPu.size > powerups.length) {
+    const live = new Set(powerups.map((p) => p.id));
+    for (const id of announcedPu) if (!live.has(id)) announcedPu.delete(id);
+  }
+}
+
+function easeOutBack(t) {
+  const c1 = 1.70158, c3 = c1 + 1, u = t - 1;
+  return 1 + c3 * u * u * u + c1 * u * u;
+}
+// Soft glow so a powerup reads against busy paint -- kept type-agnostic (white/
+// cream) so it never leaks the good/bad identity; reading the icon is the skill.
+function powerupGlow(x, y, r, alpha) {
+  const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+  g.addColorStop(0, `rgba(255,255,255,${alpha})`);
+  g.addColorStop(0.55, `rgba(255,246,210,${alpha * 0.5})`);
+  g.addColorStop(1, 'rgba(255,246,210,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+function powerupRing(x, y, r, alpha, w) {
+  if (alpha <= 0.002 || r <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = w;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function strokePath(pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+}
+// A cluster of 3-4 bold lightning bolts that fan out from spread entry points and
+// converge onto a tight strike zone on the powerup, each with an occasional fork.
+// Generated once per strike so the cluster holds while it flickers. Returns an
+// array of polylines (drawBolt renders every one bold).
+function makeBolt(x, y) {
+  const strokes = [];
+  const count = 3 + ((Math.random() * 2) | 0);       // 3-4 bolts
+  for (let b = 0; b < count; b++) {
+    const topY = Math.max(0, y - (110 + Math.random() * 90));
+    const topX = x + (Math.random() - 0.5) * 130;    // fan the entry points apart...
+    const ex = x + (Math.random() - 0.5) * 16;        // ...onto a tight strike cluster
+    const ey = y + (Math.random() - 0.5) * 12;
+    const segs = 7 + ((Math.random() * 2) | 0);
+    const main = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const amp = 20 * (1 - t);                       // jitter shrinks to 0 at the strike
+      const baseX = topX + (ex - topX) * t;           // centerline drifts entry -> strike
+      main.push([i === segs ? ex : baseX + (Math.random() - 0.5) * 2 * amp, topY + (ey - topY) * t]);
+    }
+    strokes.push(main);
+    if (Math.random() < 0.5) {                        // an occasional fork for streakiness
+      const j = 2 + ((Math.random() * (segs - 2)) | 0);
+      const dir = Math.random() < 0.5 ? -1 : 1;
+      let fxp = main[j][0], fyp = main[j][1];
+      const fork = [[fxp, fyp]];
+      const n = 2 + ((Math.random() * 2) | 0);
+      for (let i = 0; i < n; i++) { fxp += dir * (8 + Math.random() * 12); fyp += 9 + Math.random() * 14; fork.push([fxp, fyp]); }
+      strokes.push(fork);
+    }
+  }
+  return strokes;
+}
+// Layered draw: wide blue glow + light-blue mid + white core = classic bolt.
+function drawBolt(strokes, alpha) {
+  if (alpha <= 0.02) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const passes = [['#6fb0ff', 9, 0.55], ['#cfe6ff', 4, 0.85], ['#ffffff', 2, 1.1]];
+  for (const [color, w, a] of passes) {
+    ctx.globalAlpha = Math.min(1, alpha * a);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w;
+    for (const s of strokes) strokePath(s);
+  }
+  ctx.restore();
+}
+// Blue-white flash at the strike point.
+function lightningFlash(x, y, r, alpha) {
+  if (alpha <= 0.01) return;
+  const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+  g.addColorStop(0, `rgba(235,245,255,${alpha})`);
+  g.addColorStop(0.5, `rgba(150,200,255,${alpha * 0.5})`);
+  g.addColorStop(1, 'rgba(120,180,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawPowerup(pu) {
   if (!powerupReady) return;
+  const fx = powerupFx(pu);
   const bob = Math.sin(nowMs / 420 + pu.id * 1.3) * 1.5;
   const x = pu.x, y = pu.y + bob;
+  const age = nowMs - fx.bornMs;
+
+  // Spawn pop: scale up from nothing with a little overshoot (first 320ms).
+  const scale = age < 320 ? Math.max(0, easeOutBack(age / 320)) : 1;
+  // Gentle idle pulse so it keeps catching the eye while it sits on the board.
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 360 + pu.id * 1.7);
 
   drawGroundShadow(x, y + 19, 24, 8, 0.34);
-  drawPowerupSprite(pu.type, 'active', x, y, 56);
+  powerupGlow(x, y, (28 + 4 * pulse) * Math.max(scale, 0.6), 0.16 + 0.07 * pulse);
+
+  // Lightning strike on spawn: a cluster of jagged bolts cracks down onto the new
+  // powerup and flickers out (replaces the old expanding telegraph ring).
+  if (age < BOLT_MS && fx.bolt) {
+    const e = 1 - age / BOLT_MS;
+    const flick = Math.pow(Math.abs(Math.cos(age * 0.05)), 0.6) * e;
+    lightningFlash(pu.x, pu.y, 30 + 48 * e, 0.62 * flick);
+    drawBolt(fx.bolt, flick);
+  }
+
+  // Icon switched -> flash ring + a quick edge-on flip to sell the change.
+  let flipX = 1;
+  const sage = nowMs - fx.switchMs;
+  if (sage < 360) {
+    const st = sage / 360;
+    powerupRing(x, y, 12 + st * 34, (1 - st) * 0.7, 1 + 3 * (1 - st));
+    flipX = Math.abs(Math.cos(st * Math.PI));   // 1 -> 0 (edge-on) -> 1
+  }
+
+  drawPowerupSprite(pu.type, 'active', x, y, 56, 1, scale * flipX, scale);
 }
 
 // Board contents in WORLD coordinates (caller sets the world->device transform).
@@ -794,6 +982,7 @@ function drawBoardContent() {
   // paintLayer is supersampled (PAINT_SS x world res) for crisp trails on big
   // screens; scale it down to world coords here.
   if (paintLayer) ctx.drawImage(paintLayer, 0, 0, paintLayer.width, paintLayer.height, 0, 0, G.worldW, G.worldH);
+  prunePowerupFx();
   for (const pu of powerups) drawPowerup(pu);
   if (pickupFades.length) {
     for (const fx of pickupFades) drawPickupFade(fx);
@@ -817,13 +1006,13 @@ function drawBoardContent() {
 function drawActors() {
   const actors = [];
   for (const r of remote.values()) {
-    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, inputActive: r.inputActive, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, castType: r.castType });
+    actors.push({ x: r.rx, y: r.ry, slot: r.slot, face: r.face, dirAngle: r.dirAngle, speed: r.speed, inputActive: r.inputActive, isMe: false, boost: r.boost, frozen: r.frozen, noPaint: r.noPaint, castType: r.castType, paintScale: r.paintScale });
   }
   if (me.has && !spectating) {
-    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, dirAngle: me.dirAngle, speed: me.speed, inputActive: me.inputActive, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint, castType: me.castType });
+    actors.push({ x: me.x, y: me.y, slot: mySlot, face: me.face, dirAngle: me.dirAngle, speed: me.speed, inputActive: me.inputActive, isMe: true, boost: me.boost, frozen: me.frozen, noPaint: me.noPaint, castType: me.castType, paintScale: me.paintScale });
   }
   actors.sort((a, b) => a.y - b.y);
-  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.castType, a.inputActive);
+  for (const a of actors) drawBrushSprite(a.x, a.y, a.slot, a.face, a.dirAngle, a.speed, a.isMe, a.boost, a.frozen, a.noPaint, a.castType, a.inputActive, a.paintScale);
 }
 
 function render() {

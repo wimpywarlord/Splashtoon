@@ -37,6 +37,8 @@ const {
   BOT_NOTICE_R,
   COARSE_ZW,
   COARSE_ZH,
+  POWERUP_TTL_MS,
+  POWERUP_R,
 } = require('./config');
 
 const TWO_PI = Math.PI * 2;
@@ -44,6 +46,10 @@ const TOTAL_CELLS = GRID_W * GRID_H;
 const ZONE_CELLS = (GRID_W / COARSE_ZW) * (GRID_H / COARSE_ZH);
 const ZONE_W_PX = WORLD_W / COARSE_ZW;
 const ZONE_H_PX = WORLD_H / COARSE_ZH;
+
+// Self-harming powerup types. Bots read the icon and mostly steer clear; see
+// badGrabChance for how often a flipping icon fools one into grabbing anyway.
+const BAD_POWERUPS = new Set(['slow', 'selfFreeze', 'selfInkjam', 'badMissile', 'tiny']);
 
 const NAME_POOL = [
   'Riley', 'Kai', 'Mara', 'Devon', 'Sora', 'Nova', 'Pip', 'Jules', 'Remy', 'Ash',
@@ -141,11 +147,13 @@ function createBotAI() {
     retargetAt: 0,
     thinkUntil: 0,
     puId: null,
-    puReactAt: 0,
     puChase: false,
     puReCheckAt: 0,
-    inkSeen: 0,        // noPaintUntil of the inkjam we last reacted to
-    inkIdle: false,    // this bot decided to wait out the current inkjam
+    puReadType: null,  // powerup type this bot last formed a verdict on
+    puJudgeAt: 0,      // when the lean resolves into a verdict
+    puVerdict: 'go',   // 'pending' (leaning toward it) | 'go' (commit) | 'avoid' (peel off)
+    disruptSeen: 0,    // signature of the jam/erase episode this bot last reacted to
+    disruptIdle: false,// this (rare) bot decided to wait the current episode out
   };
 }
 
@@ -173,6 +181,31 @@ function nearestPowerup(room, p, noticeR) {
   return best;
 }
 
+// Chance a bot misreads a CURRENTLY-bad powerup as worth grabbing. Low for a
+// steady icon (you can see it's bad); higher the more the icon cycles (the
+// "twist"), because you can't reliably tell what you'll actually pick up.
+function badGrabChance(pu, ai) {
+  const switches = pu.switches ? pu.switches.length : 0;
+  // Chance a bot gambles and commits to a powerup it has judged BAD. Low for a
+  // single-switch icon (the baseline), rising for the frantic multi-changers. Tuned
+  // cautious -- bots peel off most bad ones -- with greedier bots gambling more,
+  // most so on the rapidly-cycling icons.
+  const extra = Math.max(0, switches - 1);
+  const greed = ai ? ai.greed : 0;
+  return Math.min(0.025 + 0.06 * extra + greed * (0.015 + 0.03 * extra), 0.34);
+}
+
+// Short-range push away from a bad powerup the bot has chosen to skip, so "avoid"
+// is literal -- it veers around rather than strolling onto the pickup ring.
+function badPowerupRepel(p, pu) {
+  const dx = p.x - pu.x, dy = p.y - pu.y;
+  const d = Math.hypot(dx, dy);
+  const R = POWERUP_R + BRUSH_R * 5;
+  if (d >= R || d < 0.001) return { x: 0, y: 0 };
+  const w = (1 - d / R) * 2.2;
+  return { x: (dx / d) * w, y: (dy / d) * w };
+}
+
 // Decide whether to commit to a powerup, the way a human sizes up the race:
 // always contest a tight race, usually bail when a rival is clearly closer or it
 // will expire first -- but sometimes chase anyway (optimism; greedier bots more).
@@ -189,11 +222,22 @@ function worthChasing(p, pu, room, ai, t) {
   if (Number.isFinite(timeLeft) && myD > timeLeft * MAX_SPEED * 0.85 * 1.1) {
     return Math.random() < 0.12;            // basically unreachable -> rarely stubborn
   }
-  // Tight race (ahead, or within ~a brush of the closest rival): always go.
-  if (myD <= rivalD + BRUSH_R * 3) return true;
-  // Clearly behind: usually give up, but sometimes chase anyway.
-  const behind = clamp((myD - rivalD) / 240, 0, 1);
-  const chaseProb = (0.55 + 0.25 * ai.greed) - 0.55 * behind;
+  // How long it's sat unclaimed (0 = fresh, 1 = about to expire). A rival being
+  // "closer" only matters if they're actually going for it -- the longer it lingers,
+  // the more that supposedly-closer rival has proven they AREN'T, so we discount
+  // their lead and grow everyone's appetite. This is what stops a powerup from
+  // sitting dead because every bot deferred to a rival (often the human, or another
+  // bot that also passed) who never actually moved on it.
+  const ageFrac = Number.isFinite(timeLeft)
+    ? clamp(1 - timeLeft / (POWERUP_TTL_MS / 1000), 0, 1)
+    : 0;
+  const behindEff = Math.max(0, myD - rivalD) * (1 - 0.8 * ageFrac);
+  // Effectively closest (within ~a brush), or the rival's lead has gone stale: go.
+  if (behindEff <= BRUSH_R * 3) return true;
+  // Otherwise weigh it: greedier bots chase harder, a big deficit deters, and a
+  // lingering powerup tempts everyone more as it ages.
+  const behind = clamp(behindEff / 240, 0, 1);
+  const chaseProb = (0.55 + 0.25 * ai.greed) - 0.55 * behind + 0.35 * ageFrac;
   return Math.random() < chaseProb;
 }
 
@@ -336,34 +380,66 @@ function updateBot(p, room, dt, t) {
   // 1. Hesitation: coast (zero input -> damping eases to a stop).
   if (t < ai.thinkUntil) { p.mx = 0; p.my = 0; return; }
 
-  // Ink-jammed: a few bots just shrug and wait it out -- no point moving when you
-  // can't paint anyway (decided once per jam; most bots keep repositioning).
-  if (t < p.noPaintUntil) {
-    if (ai.inkSeen !== p.noPaintUntil) { ai.inkSeen = p.noPaintUntil; ai.inkIdle = Math.random() < 0.04; }
-    if (ai.inkIdle) { p.mx = 0; p.my = 0; return; }
+  // Disrupted: can't paint normally right now -- ink-jammed / self-jammed (no paint
+  // lands) or caught in an erase field (moving WIPES paint). Either way, don't waste
+  // the clock: a rare bot (1%) just shrugs and waits it out for human flavor, but
+  // everyone else beelines to the best territory zone (chosen below), skipping the
+  // paint-field it can't use. That zone is enemy-heavy, so an active erase even works
+  // in our favor there -- and the bot's parked on prime ground when the effect lifts.
+  // Powerup grabs still apply -- a pickup is worth having disrupted or not.
+  const disrupted = t < p.noPaintUntil || t < p.erasingUntil;
+  if (disrupted) {
+    const sig = Math.max(p.noPaintUntil, p.erasingUntil);   // one decision per episode
+    if (ai.disruptSeen !== sig) { ai.disruptSeen = sig; ai.disruptIdle = Math.random() < 0.01; }
+    if (ai.disruptIdle) { p.mx = 0; p.my = 0; return; }
   }
 
   const band = rubberBand(room, p);
 
-  // 2. Powerup priority: only bots with one in range even consider it, and only
-  // if they judge the race winnable (re-assessed periodically). Chasers grab it
-  // after their reaction delay; the rest carry on painting.
+  // 2. Powerup priority. A bot instinctively leans toward a powerup whose race it
+  // can win, then partway there "reads the icon" and forms a verdict: commit, or
+  // realise it's bad and peel off. Greedier bots commit longer before judging and
+  // gamble on bad ones more; cautious bots reconsider sooner and bail. Because the
+  // type keeps flipping, every flip re-opens the judgment (lean -> verdict).
   let urgent = false;
+  let avoidPU = false;
   const pu = nearestPowerup(room, p, ai.noticeR);
   if (pu) {
     if (ai.puId !== pu.id) {
       ai.puId = pu.id;                                       // newly noticed
-      ai.puReactAt = t + rand(ai.reactMs[0], ai.reactMs[1]);
       ai.puChase = worthChasing(p, pu, room, ai, t);
       ai.puReCheckAt = t + 500;
-    } else if (ai.puChase && t >= ai.puReCheckAt) {
+      ai.puReadType = null;                                   // force a fresh read below
+    } else if (t >= ai.puReCheckAt) {
       ai.puReCheckAt = t + 500;
-      ai.puChase = worthChasing(p, pu, room, ai, t);          // bail if it's now lost
+      ai.puChase = worthChasing(p, pu, room, ai, t);          // re-assess the race
     }
-    if (ai.puChase && t >= ai.puReactAt) { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
+    // A flip (or first sighting) restarts the lean: head toward it while assessing.
+    // Greed stretches the commitment; a quicker reaction shortens it.
+    if (ai.puReadType !== pu.type) {
+      ai.puReadType = pu.type;
+      ai.puVerdict = 'pending';
+      ai.puJudgeAt = t + rand(ai.reactMs[0], ai.reactMs[1]) + 520 * ai.greed + rand(0, 140);
+    }
+    // Resolve once the lean elapses OR once close enough to read it clearly -- so a
+    // bot never blunders onto a bad pickup it's standing next to. Good -> commit;
+    // bad -> peel off unless this bot gambles (greed/flip-driven).
+    if (ai.puVerdict === 'pending') {
+      const dist = Math.hypot(pu.x - p.x, pu.y - p.y);
+      if (t >= ai.puJudgeAt || dist < BRUSH_R * 8) {
+        const bad = BAD_POWERUPS.has(pu.type);
+        ai.puVerdict = (!bad || Math.random() < badGrabChance(pu, ai)) ? 'go' : 'avoid';
+        if (ai.puVerdict === 'avoid') ai.retargetAt = 0;      // peel off -> re-plan territory now
+      }
+    }
+    // Lean/commit toward it unless judged "avoid" (then steer clear of the pickup).
+    if (ai.puChase && ai.puVerdict !== 'avoid') { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
+    else if (ai.puVerdict === 'avoid') avoidPU = true;
   } else if (ai.puId !== null) {
     ai.puId = null;            // it was taken / expired -> resume territory now
     ai.puChase = false;
+    ai.puReadType = null;
+    ai.puVerdict = 'go';
     ai.retargetAt = 0;
   }
 
@@ -375,7 +451,7 @@ function updateBot(p, room, dt, t) {
       else interval *= (1 + 0.4 * -band);                     // leading -> dawdle
       ai.retargetAt = t + interval;
       const pauseProb = ai.thinkProb * (1 - 0.7 * Math.max(0, band));
-      if (Math.random() < pauseProb) ai.thinkUntil = t + rand(ai.thinkMs[0], ai.thinkMs[1]);
+      if (!disrupted && Math.random() < pauseProb) ai.thinkUntil = t + rand(ai.thinkMs[0], ai.thinkMs[1]);
       chooseTerritoryTarget(p, room, ai, band);
     }
     // Reached the goal -> re-plan promptly so the bot keeps sweeping, not idling.
@@ -388,7 +464,9 @@ function updateBot(p, room, dt, t) {
   // 4. Steer (slew-limited -> always human-smooth).
   ai.wanderPhase += dt * ai.wanderFreq;
   let desired;
-  if (urgent) {
+  if (urgent || disrupted) {
+    // Beeline to the target -- the powerup when urgent, else the best territory
+    // zone -- straight and committed, with no paint-field curl.
     desired = Math.atan2(ai.targetY - p.y, ai.targetX - p.x) + Math.sin(ai.wanderPhase) * (ai.wanderAmp * 0.25);
   } else {
     // Blend global zone target + local paint-field + momentum + rival spacing.
@@ -409,9 +487,13 @@ function updateBot(p, room, dt, t) {
     }
     desired = Math.atan2(dvy, dvx) + Math.sin(ai.wanderPhase) * ai.wanderAmp + ai.aimBias;
   }
+  if (avoidPU) {
+    const rep = badPowerupRepel(p, pu);
+    if (rep.x || rep.y) desired = Math.atan2(Math.sin(desired) + rep.y, Math.cos(desired) + rep.x);
+  }
   desired = avoidEdges(p, desired);
 
-  const turn = ai.turnRate * (urgent ? 1.5 : 1) * (1 + 0.3 * Math.max(0, band));
+  const turn = ai.turnRate * (urgent ? 1.5 : disrupted ? 1.3 : 1) * (1 + 0.3 * Math.max(0, band));
   ai.aimAngle = stepAngle(ai.aimAngle, desired, turn * dt);
   p.mx = Math.cos(ai.aimAngle);
   p.my = Math.sin(ai.aimAngle);

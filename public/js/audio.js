@@ -152,6 +152,7 @@
   // ---- public SFX -----------------------------------------------------------
   function pickup(type) {
     if (!ctx || !claimVoice(0.5)) return;
+    const t0 = now();
     if (type === 'speed') {
       tone({ type: 'triangle', f0: 520, f1: 980, dur: 0.16, gain: 0.32 });
       tone({ type: 'triangle', f0: 780, f1: 1460, dur: 0.14, gain: 0.18, delay: 0.05 });
@@ -164,6 +165,38 @@
     } else if (type === 'missile') {
       tone({ type: 'square', f0: 180, f1: 720, dur: 0.22, gain: 0.2 });
       tone({ type: 'sawtooth', f0: 90, f1: 360, dur: 0.26, gain: 0.14, delay: 0.02 });
+    } else if (type === 'mega') {
+      tone({ type: 'triangle', f0: 210, f1: 420, dur: 0.2, gain: 0.26 });
+      tone({ type: 'sine', f0: 105, f1: 155, dur: 0.24, gain: 0.18, delay: 0.03 });
+      noise({ filter: 'lowpass', freq: 620, dur: 0.14, gain: 0.11, at: t0 + 0.02 });
+    } else if (type === 'echo') {
+      tone({ type: 'sine', f0: 720, f1: 1180, dur: 0.13, gain: 0.18 });
+      tone({ type: 'sine', f0: 720, f1: 1180, dur: 0.13, gain: 0.12, delay: 0.08 });
+      tone({ type: 'triangle', f0: 480, f1: 760, dur: 0.2, gain: 0.12, delay: 0.04 });
+    } else if (type === 'erase') {
+      noise({ filter: 'bandpass', freq: 1200, q: 0.7, dur: 0.18, gain: 0.16, at: t0 });
+      tone({ type: 'sawtooth', f0: 420, f1: 180, dur: 0.2, gain: 0.14 });
+      tone({ type: 'triangle', f0: 760, f1: 540, dur: 0.12, gain: 0.1, delay: 0.08 });
+    } else if (type === 'slow') {
+      tone({ type: 'sawtooth', f0: 420, f1: 85, dur: 0.34, gain: 0.2 });
+      noise({ filter: 'lowpass', freq: 360, q: 0.6, dur: 0.28, gain: 0.16, at: t0 + 0.02 });
+    } else if (type === 'selfFreeze') {
+      tone({ type: 'sine', f0: 1700, f1: 620, dur: 0.26, gain: 0.2 });
+      noise({ filter: 'highpass', freq: 4200, dur: 0.16, gain: 0.09, at: t0 });
+      tone({ type: 'triangle', f0: 310, f1: 180, dur: 0.18, gain: 0.11, delay: 0.08 });
+    } else if (type === 'selfInkjam') {
+      tone({ type: 'sawtooth', f0: 260, f1: 70, dur: 0.28, gain: 0.2 });
+      noise({ filter: 'lowpass', freq: 520, q: 0.9, dur: 0.18, gain: 0.14, at: t0 });
+      noise({ filter: 'bandpass', freq: 240, q: 0.5, dur: 0.16, gain: 0.11, at: t0 + 0.11 });
+    } else if (type === 'badMissile') {
+      noise({ filter: 'highpass', freq: 1800, dur: 0.08, gain: 0.22, at: t0 });
+      tone({ type: 'square', f0: 620, f1: 110, dur: 0.24, gain: 0.16, delay: 0.02 });
+      noise({ filter: 'lowpass', freq: 420, dur: 0.24, gain: 0.18, at: t0 + 0.05 });
+      duck(0.18, 0.24);
+    } else if (type === 'tiny') {
+      tone({ type: 'triangle', f0: 1300, f1: 940, dur: 0.08, gain: 0.16 });
+      tone({ type: 'triangle', f0: 980, f1: 720, dur: 0.08, gain: 0.12, delay: 0.07 });
+      tone({ type: 'triangle', f0: 720, f1: 520, dur: 0.1, gain: 0.09, delay: 0.14 });
     } else {
       tone({ type: 'triangle', f0: 600, f1: 900, dur: 0.14, gain: 0.28 });
     }
@@ -203,6 +236,22 @@
   function spawn() {
     if (!ctx || !claimVoice(0.3)) return;
     tone({ type: 'triangle', f0: 300, f1: 620, dur: 0.2, gain: 0.26 });
+  }
+
+  // Lightning strike: a sharp crack with low-mid weight, an electric zap diving into
+  // the sub, then a long rolling thunder roar -- deeper and bigger than a chime. The
+  // music ducks under it.
+  function powerupSpawn() {
+    if (!ctx || !claimVoice(1.0)) return;
+    const t0 = now();
+    noise({ filter: 'highpass', freq: 2300, dur: 0.08, gain: 0.24, at: t0 });           // bright snap
+    noise({ filter: 'bandpass', freq: 700, q: 0.6, dur: 0.12, gain: 0.30, at: t0 });     // crack body
+    tone({ type: 'sawtooth', f0: 1200, f1: 70, dur: 0.18, gain: 0.12 });                 // zap into sub
+    noise({ filter: 'lowpass', freq: 220, dur: 0.7, gain: 0.32, at: t0 + 0.04 });        // roar
+    noise({ filter: 'lowpass', freq: 120, dur: 0.9, gain: 0.28, at: t0 + 0.10 });        // deep roll
+    noise({ filter: 'lowpass', freq: 70, dur: 1.0, gain: 0.20, at: t0 + 0.16 });         // sub rumble
+    tone({ type: 'sine', f0: 90, f1: 50, dur: 0.7, gain: 0.15, delay: 0.05 });           // body boom
+    duck(0.3, 0.55);
   }
 
   // ---- movement whoosh (driven by predicted local speed) --------------------
@@ -340,7 +389,7 @@
   });
 
   global.SplashtoonAudio = {
-    unlock, pickup, impact, tick, roundEnd, spawn, movement, duck,
+    unlock, pickup, impact, tick, roundEnd, spawn, powerupSpawn, movement, duck,
     setMuted, isMuted, setVolume, getVolume, setMusicEnabled,
     setMusicVolume, getMusicVolume, setSfxVolume, getSfxVolume,
   };
