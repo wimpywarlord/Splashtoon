@@ -111,9 +111,19 @@ html, body {
 .sc-stage[data-value="GO!"] {
   --sc-a: #ff4d8d;
   --sc-b: #36d8ff;
+  --sc-disk-speed: 0.16s;
 }
 .sc-stage[data-value="GO!"]::before {
   background: none;
+}
+.sc-stage[data-value="3"] {
+  --sc-disk-speed: 0.55s;
+}
+.sc-stage[data-value="2"] {
+  --sc-disk-speed: 0.4s;
+}
+.sc-stage[data-value="1"] {
+  --sc-disk-speed: 0.24s;
 }
 .sc-beam,
 .sc-ring,
@@ -199,24 +209,78 @@ html, body {
 }
 .sc-swash {
   z-index: 2;
-  left: 22%;
-  right: 22%;
-  bottom: 8%;
-  height: 13%;
-  border-radius: 50% / 44%;
-  clip-path: ellipse(50% 36% at 50% 54%);
+  left: 10%;
+  right: 10%;
+  bottom: -6%;
+  height: 34%;
+  overflow: hidden;
+  border-radius: 50%;
+  clip-path: none;
+  background: transparent;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 18px 24px rgba(0, 0, 0, 0.34),
+    0 0 24px rgba(54, 216, 255, 0.12);
+  opacity: 0.96;
+  transform: perspective(560px) rotateX(64deg) translateY(5%);
+  transform-origin: 50% 88%;
+  transform-style: preserve-3d;
+}
+.sc-swash::before,
+.sc-swash::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+  border-radius: 50%;
+}
+.sc-swash::before {
+  inset: 0;
+  --sc-angle: 0deg;
   background:
-    radial-gradient(ellipse at 22% 38%, rgba(255, 255, 255, 0.96) 0 6px, transparent 7px),
-    radial-gradient(ellipse at 72% 42%, color-mix(in srgb, var(--sc-b) 68%, #fff) 0 8px, transparent 9px),
-    linear-gradient(100deg, color-mix(in srgb, var(--sc-a) 90%, #fff), var(--sc-b));
-  filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.38));
-  opacity: 0.9;
+    conic-gradient(from var(--sc-angle) at 50% 50%,
+      #ff315c 0deg 30deg,
+      #ff9c00 30deg 60deg,
+      #ffe600 60deg 88deg,
+      #57e000 88deg 118deg,
+      #25f35d 118deg 150deg,
+      #5fffe5 150deg 178deg,
+      #0873ff 178deg 214deg,
+      #6148ff 214deg 248deg,
+      #aa19ff 248deg 286deg,
+      #f000b0 286deg 322deg,
+      #ff315c 322deg 360deg);
+  opacity: 1;
+  filter: saturate(1.18) brightness(1.06);
+  will-change: background;
+  animation: sc-disk-spin var(--sc-disk-speed, 1.45s) linear infinite;
+}
+.sc-swash::after {
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 9%, rgba(255, 255, 255, 0.44) 0 9%, rgba(255, 255, 255, 0.14) 25%, transparent 54%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 48%, rgba(0, 0, 0, 0.12));
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -8px 12px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  opacity: 0.64;
 }
 .sc-stage[data-value="GO!"] .sc-swash {
-  background:
-    radial-gradient(ellipse at 22% 38%, rgba(255, 255, 255, 0.96) 0 6px, transparent 7px),
-    radial-gradient(ellipse at 72% 42%, rgba(54, 216, 255, 0.72) 0 8px, transparent 9px),
-    linear-gradient(100deg, #ff4d8d, #36d8ff);
+  opacity: 1;
+  filter: saturate(1.18) drop-shadow(0 0 18px rgba(54, 216, 255, 0.24));
+}
+/* Spin the COLORS inside the fixed disk shape, not the shape itself.
+   The disk is a very wide ellipse (~3.8:1); rotating the elliptical ::before
+   layer swept its footprint into a narrow vertical bar near 90deg/270deg,
+   leaving the sides dark. Animating the conic-gradient angle keeps the whole
+   disk painted every frame while the rainbow rotates in place. */
+@property --sc-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes sc-disk-spin {
+  to { --sc-angle: 360deg; }
 }
 .sc-digit {
   position: absolute;
@@ -240,10 +304,10 @@ html, body {
     0 0 54px color-mix(in srgb, var(--sc-b) 28%, transparent);
 }
 .sc-stage[data-value="GO!"] .sc-digit {
-  padding-bottom: 15%;
-  font-size: clamp(52px, 13.5vh, 118px);
+  padding-bottom: 12%;
+  font-size: clamp(88px, 22vh, 198px);
   color: #fff0c9;
-  -webkit-text-stroke-width: clamp(4px, 0.65vh, 7px);
+  -webkit-text-stroke-width: clamp(5px, 0.8vh, 9px);
 }
 .sc-sprite {
   --row: 0;
@@ -252,29 +316,31 @@ html, body {
   width: var(--size, 86px);
   aspect-ratio: 192 / 208;
   background-image: url("/assets/brush-spirit.png");
+  background-repeat: no-repeat;
   background-size: 800% 900%;
   background-position:
     calc(var(--col) * 100% / 7)
     calc(var(--row) * 100% / 8);
+  image-rendering: auto;
   filter:
     drop-shadow(0 8px 0 rgba(0, 0, 0, 0.5))
     drop-shadow(0 0 12px color-mix(in srgb, var(--sc-a) 46%, transparent));
   transform-origin: 50% 76%;
 }
 .sc-sprite-main {
-  --size: min(15vw, 90px);
+  --size: min(13vw, 76px);
   left: 50%;
   bottom: 2%;
   transform: translateX(-50%);
 }
 .sc-sprite-second {
-  --size: min(12.5vw, 74px);
+  --size: min(10.5vw, 62px);
   left: 23%;
   bottom: 15%;
   transform: scaleX(-1);
 }
 .sc-sprite-third {
-  --size: min(12.5vw, 74px);
+  --size: min(10.5vw, 62px);
   right: 23%;
   bottom: 15%;
 }
@@ -385,11 +451,11 @@ html, body {
     font-size: clamp(78px, 19vh, 166px);
   }
   .sc-stage[data-value="GO!"] .sc-digit {
-    font-size: clamp(46px, 12vh, 96px);
+    font-size: clamp(78px, 19vh, 166px);
   }
-  .sc-sprite-main { --size: min(19vw, 82px); }
+  .sc-sprite-main { --size: min(17vw, 72px); }
   .sc-sprite-second,
-  .sc-sprite-third { --size: min(16vw, 68px); }
+  .sc-sprite-third { --size: min(14vw, 58px); }
 }
 
 /* Timer: a centered chip with a layered "electric border" (displaced ring +

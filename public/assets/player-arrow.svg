@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="player marker arrow">
+  <path fill="#ff9f00" d="M202 138c0-25 20-45 45-45h18c25 0 45 20 45 45v144h38c37 0 57 43 33 72l-88 106c-18 22-52 22-70 0L135 354c-24-29-4-72 33-72h34V138Z"/>
+  <path fill="#ffc20e" d="M202 111c0-25 20-45 45-45h18c25 0 45 20 45 45v144h38c37 0 57 43 33 72l-88 106c-18 22-52 22-70 0l-88-106c-24-29-4-72 33-72h34V111Z"/>
+</svg>

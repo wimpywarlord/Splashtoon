@@ -62,7 +62,8 @@ const {
   POWERUP_SPAWN_POOL,
   POWERUP_SWITCH_CHANCES,
   PALETTE,
-  SPAWNS,
+  COUNTDOWN_SPAWNS,
+  MAX_NAME_LEN,
   COARSE_ZW,
   COARSE_ZH,
   BOT_COARSE_MS,
@@ -105,8 +106,8 @@ function makePowerupSwitches(spawnedAt, count) {
   // at fixed, evenly-spaced points -- you can't anticipate the twist. Stay clear of
   // the spawn strike (early) and the expiry (late), and keep flips far enough apart
   // that each one still reads distinctly.
-  const minT = 500;                        // after the spawn lightning settles
-  const maxT = POWERUP_TTL_MS - 550;       // before it expires
+  const minT = 650;                        // after the spawn lightning settles
+  const maxT = POWERUP_TTL_MS - 700;       // before it expires
   const minGap = 600;                      // visible separation between flips
   const times = [];
   for (let attempt = 0; attempt < 40 && times.length < count; attempt++) {
@@ -137,13 +138,45 @@ function closestPointDist2(ax, ay, bx, by, px, py) {
   return x * x + y * y;
 }
 
-// Clean a client-supplied display name: bound length, drop control chars and
-// markup so it is safe to render and can't be confused with structure.
+// Clean a client-supplied display name so it is safe to store/render and can't
+// wreck the UI. Order matters: compose accents first (NFC) so a legit "e-acute"
+// survives as one code point, THEN strip what actually breaks layout. CSS
+// ellipsis only bounds WIDTH, so the vertical/structural attacks must die here,
+// not in the stylesheet. Length is bounded by code points (not UTF-16 units) so
+// emoji aren't sliced into broken surrogate halves.
 function sanitizeName(raw) {
-  if (typeof raw !== 'string') return '';
-  let s = raw.replace(/[\u0000-\u001f\u007f<>&"'`]/g, '').trim();
-  if (s.length > 16) s = s.slice(0, 16).trim();
+  if (typeof raw !== 'string' || raw === '') return '';
+  // Banned code points: invisible, control, markup, or text-reordering -- the
+  // stuff CSS can't save us from. Tested numerically so this source stays ASCII.
+  const banned = (cp) =>
+    cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) ||        // C0 / C1 control
+    cp === 0x22 || cp === 0x26 || cp === 0x27 ||       // " & '
+    cp === 0x3c || cp === 0x3e || cp === 0x60 ||       // < > `
+    (cp >= 0x200b && cp <= 0x200f) ||                  // zero-width + LRM / RLM
+    cp === 0x2028 || cp === 0x2029 ||                  // line / paragraph separators
+    (cp >= 0x202a && cp <= 0x202e) ||                  // bidi embeddings / overrides
+    cp === 0x2060 || (cp >= 0x2066 && cp <= 0x2069) || // word joiner + bidi isolates
+    cp === 0xfeff;                                     // BOM / zero-width no-break
+  let s = Array.from(raw.normalize('NFC'), (ch) => (banned(ch.codePointAt(0)) ? '' : ch)).join('');
+  s = s.replace(/(\p{M})\p{M}+/gu, '$1');   // Zalgo guard: a base keeps one mark, no towers
+  s = s.replace(/^\p{M}+/u, '');            // ...and a name can't lead with a mark
+  s = s.replace(/\s+/g, ' ').trim();        // normalize/collapse whitespace
+  const cps = [...s];                       // count by code point, not UTF-16 unit
+  if (cps.length > MAX_NAME_LEN) s = cps.slice(0, MAX_NAME_LEN).join('').trim();
   return s;
+}
+
+// Pick `count` round-start positions from the fixed countdown ring, shuffled each
+// round so players do not inherit permanent per-slot starts.
+function makeSpawns(count) {
+  const pts = COUNTDOWN_SPAWNS.map(([x, y]) => [x, y]);
+  for (let i = pts.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = pts[i];
+    pts[i] = pts[j];
+    pts[j] = tmp;
+  }
+  return pts.slice(0, count);
 }
 
 class Room {
@@ -245,8 +278,8 @@ class Room {
     }
   }
 
-  placeAtSpawn(p) {
-    const [sx, sy] = SPAWNS[p.slot % SPAWNS.length];
+  placeAtSpawn(p, pos) {
+    const [sx, sy] = pos || makeSpawns(1)[0];
     p.x = sx;
     p.y = sy;
     p.vx = 0;
@@ -750,9 +783,12 @@ class Room {
     this.lastCoarseAt = now();
     this.maintainPopulation();        // top up / release bots to hit MAX_PLAYERS
     this.spawnWaitingSpectators();    // seat humans first, then bots
-    for (const p of this.players.values()) {
-      if (p.slot >= 0) this.placeAtSpawn(p);
-    }
+    // Fixed countdown-ring spawns, shuffled every round so nobody keeps the same
+    // position while everyone starts staged around the 3-2-1.
+    const active = [];
+    for (const p of this.players.values()) if (p.slot >= 0) active.push(p);
+    const spawns = makeSpawns(active.length);
+    for (let i = 0; i < active.length; i++) this.placeAtSpawn(active[i], spawns[i]);
     // Start frozen: a 3-2-1 countdown runs before paint is live (see tick()), so
     // every player -- founding human, late joiner, or bot -- is released together.
     this.phase = 'countdown';
@@ -884,6 +920,7 @@ class Room {
       palette: PALETTE,
       phase: this.phase,
       timeLeftMs: this.timeLeftMs(),
+      roundMs: ROUND_MS,
       you: { slot: p.slot, spectating: p.spectating, name: p.name },
     };
   }
@@ -898,6 +935,7 @@ class Room {
       scores: this.scoreArray(),
       powerups: this.publicPowerups(),
       timeLeftMs: this.timeLeftMs(),
+      roundMs: ROUND_MS,
       phase: this.phase,
     };
   }
@@ -942,6 +980,7 @@ class Room {
       scores: this.scoreArray(),
       powerups: this.publicPowerups(),
       timeLeftMs: Math.round(tLeft),
+      roundMs: ROUND_MS,
       phase: this.phase,
     };
     if (deltas) msg.deltas = deltas;

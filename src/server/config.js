@@ -117,13 +117,15 @@ const POWERUP_SPAWN_POOL = [
   'badMissile',
   'tiny',
 ];
-// Every powerup cycles its type at least once (the "twist"): weights sum to 1, so
-// changes:0 never comes up. Skewed toward more flips -- about half change twice or
-// more, and a few are frantic 3-4x changers.
+// Nearly every powerup cycles its type (the "twist"), skewed toward more flips --
+// about half change twice or more, and a few are frantic 3-4x changers. But 2%
+// never flip at all: betting on a bad icon changing before you reach it stays a
+// gamble, never a certainty.
 const POWERUP_SWITCH_CHANCES = [
-  { changes: 1, weight: 0.50 },
-  { changes: 2, weight: 0.30 },
-  { changes: 3, weight: 0.15 },
+  { changes: 0, weight: 0.02 },
+  { changes: 1, weight: 0.47 },
+  { changes: 2, weight: 0.32 },
+  { changes: 3, weight: 0.14 },
   { changes: 4, weight: 0.05 },
 ];
 
@@ -138,16 +140,21 @@ const PALETTE = [
   '#ff8c42',   // orange
 ];
 
-// One spawn per slot (MAX_PLAYERS): an evenly spread 3x2 grid (top/bottom rows,
-// left/center/right), ordered so consecutive slots start far apart.
-const SPAWNS = [
-  [WORLD_W * 0.15, WORLD_H * 0.2],    // top-left
-  [WORLD_W * 0.85, WORLD_H * 0.8],    // bottom-right
-  [WORLD_W * 0.85, WORLD_H * 0.2],    // top-right
-  [WORLD_W * 0.15, WORLD_H * 0.8],    // bottom-left
-  [WORLD_W * 0.5, WORLD_H * 0.15],    // top-center
-  [WORLD_W * 0.5, WORLD_H * 0.85],    // bottom-center
+// Fixed round-start positions around the central 3-2-1 countdown. The room
+// shuffles this ring each round before assigning players, so the formation stays
+// readable without letting any slot own a permanent start location.
+const COUNTDOWN_SPAWNS = [
+  [WORLD_W * 0.50, WORLD_H * 0.18],   // top
+  [WORLD_W * 0.25, WORLD_H * 0.34],   // upper-left
+  [WORLD_W * 0.75, WORLD_H * 0.34],   // upper-right
+  [WORLD_W * 0.25, WORLD_H * 0.66],   // lower-left
+  [WORLD_W * 0.75, WORLD_H * 0.66],   // lower-right
+  [WORLD_W * 0.50, WORLD_H * 0.82],   // bottom
 ];
+
+// Display-name length cap, in code points. Shared by the server sanitizer and the
+// client input so the limit is the same everywhere.
+const MAX_NAME_LEN = 16;
 
 module.exports = {
   PORT,
@@ -211,5 +218,6 @@ module.exports = {
   POWERUP_SPAWN_POOL,
   POWERUP_SWITCH_CHANCES,
   PALETTE,
-  SPAWNS,
+  COUNTDOWN_SPAWNS,
+  MAX_NAME_LEN,
 };

@@ -47,6 +47,18 @@ let powerupReady = false;
 powerupSheet.onload = () => { powerupReady = true; };
 powerupSheet.src = '/assets/powerups.png?v=powerups-12x2-r5';
 
+const playerArrow = new Image();
+let playerArrowReady = false;
+playerArrow.onload = () => { playerArrowReady = true; };
+playerArrow.src = '/assets/player-arrow.svg?v=round-start-r5';
+const PLAYER_ARROW_SIZE = 46;
+const PLAYER_ARROW_X_OFFSET = 5;
+const PLAYER_ARROW_GAP = 11;
+const PLAYER_ARROW_BOB_PX = 4;
+const PLAYER_ARROW_BOB_MS = 640;
+const PLAYER_ARROW_TIP_Y = 0.90625;
+const PLAYER_ARROW_BRUSH_TOP_INSET = 0.14;
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const ARENA_BG = '#14171f';   // dark arena surface; neon paint and brushes pop against it
@@ -108,7 +120,8 @@ let currentRoundId = 0;
 let mySlot = -1;
 let spectating = true;
 let phase = 'active';
-let timeLeftMs = 90000;
+let roundMs = 120000;   // round length ("starting time"); server sends the real value, this is the pre-connection fallback
+let timeLeftMs = roundMs;   // pre-connection fallback: show the full round, not a stale 1:30, until the server's first state
 let scores = [];
 
 let myName = '';
@@ -142,8 +155,9 @@ let nowMs = 0;
 let paintLayer = null;
 let paintCtx = null;
 
-// Layout: borderless + full-screen. The 16:9 arena is scaled to COVER the whole
-// viewport (centered; the longer axis overflows). zoom maps world px -> CSS px.
+// Layout: borderless + full-screen. The 16:9 arena is scaled to CONTAIN within
+// the viewport (whole board always visible; any slack is chrome) so every player
+// sees the identical arena regardless of window shape. zoom maps world px -> CSS px.
 const cam = { zoom: 1, dpr: 1, cssW: 1280, cssH: 720 };
 
 // ---- WebSocket --------------------------------------------------------------
@@ -189,6 +203,7 @@ function requestResync() {
 }
 
 function handle(msg) {
+  if (msg.roundMs != null) roundMs = msg.roundMs;   // round length for the pre-round clock
   switch (msg.t) {
     case 'init': {
       myId = msg.id;
@@ -764,6 +779,25 @@ function drawGroundShadow(x, y, rx, ry, alpha = 0.32) {
   ctx.restore();
 }
 
+function drawCountdownPlayerArrow(x, spriteTop, drawH, scaleCue) {
+  if (!playerArrowReady || phase !== 'countdown') return;
+
+  const lift = prefersReducedMotion() ? 0 : (0.5 + 0.5 * Math.sin((nowMs / PLAYER_ARROW_BOB_MS) * Math.PI * 2)) * PLAYER_ARROW_BOB_PX;
+  const scale = Math.max(0.88, Math.min(1.08, 0.96 + scaleCue * 0.04));
+  const size = PLAYER_ARROW_SIZE * scale;
+  const brushTop = spriteTop + drawH * PLAYER_ARROW_BRUSH_TOP_INSET;
+  const tipY = Math.max(size * PLAYER_ARROW_TIP_Y + 8, brushTop - PLAYER_ARROW_GAP - lift);
+  const y = tipY - size * PLAYER_ARROW_TIP_Y;
+
+  ctx.save();
+  ctx.globalAlpha = 0.98;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.38)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
+  ctx.drawImage(playerArrow, x + PLAYER_ARROW_X_OFFSET - size / 2, y, size, size);
+  ctx.restore();
+}
+
 // Draw the in-game brush spirit. The atlas owns pose; runtime only selects a
 // row and mirrors speed-left. Do not rotate brush sprites to fake direction.
 function spriteDrawHeight(state) {
@@ -810,6 +844,7 @@ function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen,
   const sx = ((rowSt.col || 0) + frame) * PET.cellW, sy = rowSt.row * PET.cellH;
   const dw = PET.cellW * (drawH / PET.cellH);
   const dh = drawH;
+  const spriteTop = y - dh * PET_ANCHOR_Y;
   ctx.save();
   ctx.globalAlpha = frozen ? 0.92 : 1;
   if (pose.directional) {
@@ -820,6 +855,7 @@ function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen,
     ctx.drawImage(ts, sx, sy, PET.cellW, PET.cellH, x - dw / 2, y - dh * PET_ANCHOR_Y, dw, dh);
   }
   ctx.restore();
+  if (isMe) drawCountdownPlayerArrow(x, spriteTop, drawH, scaleCue);
 }
 
 function drawPowerupSprite(type, rowName, x, y, size, alpha = 1, scaleX = 1, scaleY = 1) {
@@ -992,11 +1028,13 @@ function drawPowerup(pu) {
     drawBolt(fx.bolt, flick);
   }
 
-  // Icon switched -> flash ring + a quick edge-on flip to sell the change.
+  // Icon switched -> flash ring + a quick edge-on flip to sell the change. Kept
+  // snappy so a pickup never feels like it landed mid-switch: the server type is
+  // already final the instant it flips; this only has to read as a blink.
   let flipX = 1;
   const sage = nowMs - fx.switchMs;
-  if (sage < 360) {
-    const st = sage / 360;
+  if (sage < 200) {
+    const st = sage / 200;
     powerupRing(x, y, 12 + st * 34, (1 - st) * 0.7, 1 + 3 * (1 - st));
     flipX = Math.abs(Math.cos(st * Math.PI));   // 1 -> 0 (edge-on) -> 1
   }
@@ -1190,18 +1228,21 @@ function setCountdown(text) {
 }
 
 function updateHUD() {
-  if (els.timerVal) els.timerVal.textContent = fmtTime(timeLeftMs);
+  const inCountdown = phase === 'countdown';
+  // During the pre-round 3-2-1 the clock is frozen at the round's starting time:
+  // timeLeftMs is the 3..0 countdown remainder then, not the round length, so show
+  // the configured round duration instead.
+  if (els.timerVal) els.timerVal.textContent = fmtTime(inCountdown ? roundMs : timeLeftMs);
 
   // Pre-round 3-2-1: the server freezes the field during the 'countdown' phase and
   // releases at 0. Mirror it, and flash GO! the instant it goes active.
-  const inCountdown = phase === 'countdown';
   let cd = '';
   if (inCountdown) cd = String(Math.max(1, Math.min(3, Math.ceil(timeLeftMs / 1000))));
   else if (lastCountdownPhase === 'countdown' && phase === 'active') goUntil = nowMs + 700;
   if (!cd && goUntil) { if (nowMs < goUntil) cd = 'GO!'; else goUntil = 0; }
   setCountdown(cd);
   lastCountdownPhase = phase;
-  if (els.timer) els.timer.style.visibility = inCountdown ? 'hidden' : '';   // not the round clock yet
+  if (els.timer) els.timer.style.visibility = '';   // clock stays up through the countdown, showing the start time
 
   // Electric timer states: yellow <30s, red <10s, and the breathing speeds up as
   // it approaches 0 (--eb-speed shrinks from ~2.2s down to ~0.45s).
@@ -1645,7 +1686,10 @@ function initMenu() {
 }
 
 function startPlay() {
-  myName = (els.nameInput ? els.nameInput.value : '').trim().slice(0, 16);
+  // Slice by code point (not UTF-16 unit) so an emoji at the 16-char boundary
+  // isn't split into a lone surrogate -- that would throw in encodeURIComponent
+  // when we build the connect URL. The server re-sanitizes regardless.
+  myName = [...(els.nameInput ? els.nameInput.value : '').trim()].slice(0, 16).join('');
   if (Store) Store.setName(myName);
   inMenu = false;
   if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture

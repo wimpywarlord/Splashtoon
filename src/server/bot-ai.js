@@ -52,6 +52,7 @@ const BAD_PU_GAMBLE_EXTRA = 0.062;
 const BAD_PU_GAMBLE_GREED_BASE = 0.020;
 const BAD_PU_GAMBLE_GREED_EXTRA = 0.032;
 const BAD_PU_GAMBLE_CAP = 0.34;
+const BAD_PU_FLIP_BET = 0.06;
 
 // Self-harming powerup types. Bots read the icon and mostly steer clear; see
 // badGrabChance for how often a flipping icon fools one into grabbing anyway.
@@ -96,6 +97,62 @@ const NAME_POOL = [
   // Animal / mascot vibes.
   'WolfPack', 'ApexFox', 'IronHawk', 'KrakenX', 'RhinoRush', 'CobraStrike',
   'BlitzBear', 'SilentOwl', 'MadHornet', 'StormRaven', 'DireWolf', 'VenomViper',
+
+  // --- Expanded pool (curated). Irreverent on purpose, but the line is firm:
+  // crude/insult humor yes; slurs, hate, or graphic content no. Real people and
+  // franchises below are parody handles (single clean tokens, <=16 chars). -------
+
+  // Rude / crude / gross-out (kept PG-13 -- gross, not hateful).
+  'Buttmunch', 'Dingleberry', 'SkidMark', 'ToeJam', 'NoseGoblin', 'CrustySock',
+  'SoggyNugget', 'TrashGoblin', 'SweatyGremlin', 'Numbskull', 'Knucklehead', 'GassyOtter',
+  'StinkyPete', 'MoistBandit', 'PottyMouth', 'FartBarf', 'DumpsterFire', 'Buttsniffer',
+
+  // Trash-talk insults (internet brainrot).
+  'TouchGrass', 'SkillDiff', 'MadCuzBad', 'StaySalty', 'CopeHarder', 'GetRekt',
+  'UMadBro', 'CryAboutIt', 'SitDownKid', 'Malding', 'Ratiod', 'L2P',
+
+  // Gibberish / no-meaning handles (jibber-jabber).
+  'Balbber', 'Blorbo', 'Florp', 'Skronk', 'Wobblegog', 'Gleebus', 'Snarfblat', 'Mwerp',
+  'Zorptang', 'Blungo', 'Crumblezad', 'Flibberty', 'Grumbus', 'Plonkus', 'Skibidi',
+  'Borplenix', 'Wamblo', 'Quibnar', 'Glarptron', 'Snorflax', 'Blimble', 'Worblewok',
+
+  // Old-timey nonsense words (more jibber-jabber).
+  'Wackadoo', 'Snickelfritz', 'Bamboozle', 'Flapdoodle', 'Lollygag', 'Codswallop',
+  'Balderdash', 'Malarkey', 'Poppycock', 'Hogwash', 'Kerfuffle', 'Brouhaha',
+  'Thingamajig', 'Doohickey', 'Whoozit', 'Rapscallion', 'Scallywag', 'Fiddlesticks',
+
+  // Countries.
+  'Belgium', 'Madagascar', 'Bhutan', 'Peru', 'Latvia', 'Mongolia', 'Iceland', 'Chad',
+  'Fiji', 'Nepal', 'Oman', 'Qatar', 'Brunei', 'Tonga', 'Suriname', 'Djibouti',
+  'Vanuatu', 'Luxembourg', 'Uzbekistan', 'Slovenia', 'Paraguay', 'Zimbabwe', 'Botswana', 'Turkey',
+
+  // Film stars (parody handles).
+  'Keanu', 'Denzel', 'Pacino', 'DeNiro', 'Gosling', 'Zendaya', 'Cillian', 'TomHardy',
+  'IdrisElba', 'Mikkelsen', 'Travolta', 'Stallone', 'Sigourney', 'Tarantino', 'Scorsese', 'Pattinson',
+
+  // Adult-film stage names (recognizable handles only -- nothing explicit).
+  'JohnnySins', 'MiaKhalifa', 'SashaGrey', 'RonJeremy', 'LisaAnn', 'PeterNorth',
+  'NachoVidal', 'JohnHolmes', 'AsaAkira', 'TeraPatrick',
+
+  // Video-game characters.
+  'Kratos', 'Sephiroth', 'MasterChief', 'Pikachu', 'Bowser', 'Luigi', 'Samus', 'Ganondorf',
+  'Cloud', 'Geralt', 'Dovahkiin', 'Doomguy', 'GordonFreeman', 'LaraCroft', 'SolidSnake', 'SubZero',
+  'ChunLi', 'Waluigi', 'KingDedede', 'CaptFalcon', 'Crash', 'Spyro', 'Banjo', 'Yoshi',
+
+  // Anime characters.
+  'Goku', 'Vegeta', 'Naruto', 'Sasuke', 'Luffy', 'Zoro', 'Itachi', 'Levi',
+  'Eren', 'Mikasa', 'Gojo', 'Tanjiro', 'Nezuko', 'Killua', 'Hisoka', 'Lelouch',
+  'Saitama', 'Genos', 'Inuyasha', 'Kenshin', 'AllMight', 'Deku', 'Bakugo', 'Megumin',
+
+  // Old rock + metal bands.
+  'Zeppelin', 'Sabbath', 'Floyd', 'Steppenwolf', 'DeepPurple', 'Motorhead', 'Ramones', 'Slayer',
+  'Metallica', 'Megadeth', 'Aerosmith', 'GunsNRoses', 'TheDoors', 'Soundgarden', 'PearlJam', 'IronMaiden',
+  'JudasPriest', 'Whitesnake', 'Scorpions', 'ThinLizzy', 'Rainbow', 'Foreigner', 'Journey', 'WishboneAsh',
+
+  // Super-niche deep cuts (Rick & Morty, Lovecraft, math, etc.).
+  'Plumbus', 'Squanch', 'Birdperson', 'NoobNoob', 'GazorpaZorp', 'Cthulhu', 'Nyarlathotep', 'Bombadil',
+  'Zoidberg', 'Hypnotoad', 'Lebowski', 'Boognish', 'Mandelbrot', 'BanachTarski', 'Hofstadter', 'Eigenvalue',
+  'Frobnicate', 'Heisenberg', 'Zalgo', 'Snorlax', 'Gunter', 'MrMeeseeks', 'Glurmo', 'Quaternion',
 ];
 
 // Personality archetypes. Ranges [min,max] are sampled per bot. Tuned sharper
@@ -219,23 +276,35 @@ function nearestPowerup(room, p, noticeR) {
   return best;
 }
 
-// Chance a bot misreads a CURRENTLY-bad powerup as worth grabbing. Low for a
-// steady icon (you can see it's bad); higher the more the icon cycles (the
-// "twist"), because you can't reliably tell what you'll actually pick up.
-function badGrabChance(pu, ai) {
-  const switches = pu.switches ? pu.switches.length : 0;
-  // Chance a bot gambles and commits to a powerup it has judged BAD. Low for a
-  // single-switch icon (the baseline), rising for the frantic multi-changers. Tuned
-  // cautious -- bots peel off most bad ones -- with greedier bots gambling more,
-  // most so on the rapidly-cycling icons.
-  const extra = Math.max(0, switches - 1);
+// Chance a bot misreads a CURRENTLY-bad powerup as worth grabbing. Reasons only
+// from what the bot could actually know: flips it has WITNESSED (pu.switchIndex,
+// never the hidden schedule) plus the public odds that powerups nearly always
+// flip. Low for a steady icon (you can see it's bad); higher the more it has
+// already cycled, because you can't reliably tell what you'll pick up.
+function badGrabChance(pu, ai, dist, t) {
+  // Witnessed flips beyond the guaranteed first one read as "frantic" -- harder
+  // to bet on. Tuned cautious -- bots peel off most bad ones -- with greedier
+  // bots gambling more, most so on icons seen cycling repeatedly.
+  const seen = pu.switchIndex || 0;
+  const extra = Math.max(0, seen - 1);
   const greed = ai ? ai.greed : 0;
-  return Math.min(
+  let chance =
     BAD_PU_GAMBLE_BASE
       + BAD_PU_GAMBLE_EXTRA * extra
-      + greed * (BAD_PU_GAMBLE_GREED_BASE + BAD_PU_GAMBLE_GREED_EXTRA * extra),
-    BAD_PU_GAMBLE_CAP
-  );
+      + greed * (BAD_PU_GAMBLE_GREED_BASE + BAD_PU_GAMBLE_GREED_EXTRA * extra);
+  // Flip-anticipation bet: an unflipped bad icon will almost certainly twist
+  // before it expires (only 1 in 50 never does), so some bots go anyway --
+  // "it'll flip by the time I get there". Strongest on a long approach (more
+  // travel time for the twist to land) or when it has sat unflipped a while (the
+  // twist is overdue). ~4% on a typical read, and a genuine gamble: the dud tail
+  // means the change is never a certainty.
+  if (seen === 0 && ai) {
+    const far = Math.min(1, dist / ai.noticeR);
+    const aliveMs = POWERUP_TTL_MS - (pu.expiresAt - t);
+    const overdue = Math.min(1, aliveMs / (POWERUP_TTL_MS * 0.55));
+    chance += BAD_PU_FLIP_BET * (0.35 + 0.65 * Math.max(far, overdue));
+  }
+  return Math.min(chance, BAD_PU_GAMBLE_CAP);
 }
 
 // Short-range push away from a bad powerup the bot has chosen to skip, so "avoid"
@@ -471,7 +540,7 @@ function updateBot(p, room, dt, t) {
       const dist = Math.hypot(pu.x - p.x, pu.y - p.y);
       if (t >= ai.puJudgeAt || dist < BRUSH_R * 8) {
         const bad = BAD_POWERUPS.has(pu.type);
-        ai.puVerdict = (!bad || Math.random() < badGrabChance(pu, ai)) ? 'go' : 'avoid';
+        ai.puVerdict = (!bad || Math.random() < badGrabChance(pu, ai, dist, t)) ? 'go' : 'avoid';
         if (ai.puVerdict === 'avoid') ai.retargetAt = 0;      // peel off -> re-plan territory now
       }
     }
