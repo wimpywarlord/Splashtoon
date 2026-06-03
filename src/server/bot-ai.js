@@ -18,6 +18,10 @@
 //                     grid. Painting over an enemy cell is a 2-point swing
 //                     (they -1, you +1) vs +1 for blank, so enemy turf is valued
 //                     ~2x blank, and when behind the bot gangs the LEADER's turf.
+//   4. Revenge      - while jammed/erasing, some personalities punish the likely
+//                     power-up aggressor. Erasers either hunt the one still
+//                     painting or wipe high-value enemy turf; ink-jammed bots may
+//                     shadow the aggressor so they can overpaint when the jam ends.
 //
 // Rubber-banding keys off the score leader: a losing bot reacts faster, hesitates
 // less, and contests harder; a runaway leader eases off. So the better the human
@@ -53,6 +57,27 @@ const BAD_PU_GAMBLE_GREED_BASE = 0.020;
 const BAD_PU_GAMBLE_GREED_EXTRA = 0.032;
 const BAD_PU_GAMBLE_CAP = 0.34;
 const BAD_PU_FLIP_BET = 0.06;
+const DISRUPT_IDLE_BASE = 0.012;
+const REVENGE_SPARK_BASE = 0.018;
+const REVENGE_SPARK_VENGEANCE = 0.15;
+const REVENGE_SPARK_BEHIND = 0.06;
+const REVENGE_SPARK_LEADER_BONUS = 0.025;
+const REVENGE_SPARK_LEADING_PENALTY = 0.12;
+const REVENGE_SPARK_CAP = 0.26;
+const ERASER_HUNT_BASE = 0.24;
+const ERASER_HUNT_VENGEANCE = 0.30;
+const ERASER_HUNT_BEHIND = 0.08;
+const ERASER_HUNT_CAP = 0.62;
+const INKJAM_SHADOW_BASE = 0.20;
+const INKJAM_SHADOW_VENGEANCE = 0.24;
+const INKJAM_SHADOW_BEHIND = 0.06;
+const INKJAM_SHADOW_CAP = 0.52;
+const DISRUPT_HUNT_RETARGET_MIN_MS = 150;
+const DISRUPT_HUNT_RETARGET_MAX_MS = 250;
+const DISRUPT_SHADOW_RETARGET_MIN_MS = 320;
+const DISRUPT_SHADOW_RETARGET_MAX_MS = 520;
+const DISRUPT_TURF_RETARGET_SCALE = 0.65;
+const DISRUPT_OBJECTIVE_RETARGET_SCALE = 0.75;
 
 // Self-harming powerup types. Bots read the icon and mostly steer clear; see
 // badGrabChance for how often a flipping icon fools one into grabbing anyway.
@@ -161,22 +186,22 @@ const PERSONALITIES = {
   aggressive: {
     reactMs: [80, 150], aimError: 0.06, turnRate: 7.5,
     thinkProb: 0.02, thinkMs: [100, 250], retargetMs: [450, 800],
-    greed: 0.85, contest: 0.6, wanderAmp: 0.04, wanderFreq: 1.4,
+    greed: 0.85, contest: 0.6, vengeance: 0.70, wanderAmp: 0.04, wanderFreq: 1.4,
   },
   balanced: {
     reactMs: [120, 220], aimError: 0.12, turnRate: 5.6,
     thinkProb: 0.06, thinkMs: [180, 380], retargetMs: [600, 1100],
-    greed: 0.6, contest: 0.4, wanderAmp: 0.07, wanderFreq: 1.1,
+    greed: 0.6, contest: 0.4, vengeance: 0.42, wanderAmp: 0.07, wanderFreq: 1.1,
   },
   casual: {
     reactMs: [200, 330], aimError: 0.20, turnRate: 4.1,
     thinkProb: 0.12, thinkMs: [260, 560], retargetMs: [1000, 1700],
-    greed: 0.42, contest: 0.22, wanderAmp: 0.12, wanderFreq: 0.95,
+    greed: 0.42, contest: 0.22, vengeance: 0.24, wanderAmp: 0.12, wanderFreq: 0.95,
   },
   wanderer: {
     reactMs: [180, 300], aimError: 0.30, turnRate: 3.4,
     thinkProb: 0.18, thinkMs: [280, 650], retargetMs: [1300, 2200],
-    greed: 0.30, contest: 0.12, wanderAmp: 0.18, wanderFreq: 0.8,
+    greed: 0.30, contest: 0.12, vengeance: 0.12, wanderAmp: 0.18, wanderFreq: 0.8,
   },
 };
 // Weighted draw: a fierce field with a little character.
@@ -230,6 +255,7 @@ function createBotAI() {
     retargetMs: t.retargetMs.slice(),
     greed: t.greed,
     contest: t.contest,
+    vengeance: clamp(t.vengeance + gauss() * 0.14, 0, 1),
     wanderAmp: t.wanderAmp,
     wanderFreq: t.wanderFreq,
     noticeR: BOT_NOTICE_R * (0.7 + 0.6 * t.greed),   // greedier bots spot powerups farther
@@ -249,6 +275,10 @@ function createBotAI() {
     puVerdict: 'go',   // 'pending' (leaning toward it) | 'go' (commit) | 'avoid' (peel off)
     disruptSeen: 0,    // signature of the jam/erase episode this bot last reacted to
     disruptIdle: false,// this (rare) bot decided to wait the current episode out
+    disruptMode: 'objective',
+    disruptTargetId: 0,
+    disruptTargetSlot: -1,
+    disruptRetargetAt: 0,
   };
 }
 
@@ -266,6 +296,15 @@ function leaderSlotOf(room) {
   return slot;
 }
 
+function topEnemySlotOf(room, p) {
+  let slot = -1, best = 0;
+  for (let s = 0; s < MAX_PLAYERS; s++) {
+    if (s === p.slot) continue;
+    if (room.scores[s] > best) { best = room.scores[s]; slot = s; }
+  }
+  return slot;
+}
+
 function nearestPowerup(room, p, noticeR) {
   let best = null;
   let bestD = noticeR;
@@ -274,6 +313,57 @@ function nearestPowerup(room, p, noticeR) {
     if (d < bestD) { bestD = d; best = pu; }
   }
   return best;
+}
+
+function isNormalPainter(o, t) {
+  return t >= o.noPaintUntil && t >= o.erasingUntil && t >= o.frozenUntil;
+}
+
+function closestActorForSlot(room, p, slot, t, normalOnly = false) {
+  if (slot < 0) return null;
+  let best = null;
+  let bestD2 = Infinity;
+  for (const o of room.players.values()) {
+    if (o.slot !== slot || o.slot === p.slot || o.slot < 0) continue;
+    if (normalOnly && !isNormalPainter(o, t)) continue;
+    const dx = o.x - p.x, dy = o.y - p.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = o; }
+  }
+  return best;
+}
+
+function soleEnemyNormalPainter(room, p, t) {
+  const bySlot = new Map();
+  for (const o of room.players.values()) {
+    if (o.slot < 0 || o.slot === p.slot || !isNormalPainter(o, t)) continue;
+    const cur = bySlot.get(o.slot);
+    const dx = o.x - p.x, dy = o.y - p.y;
+    const d2 = dx * dx + dy * dy;
+    if (!cur || d2 < cur.d2) bySlot.set(o.slot, { p: o, d2 });
+  }
+  if (bySlot.size !== 1) return null;
+  return bySlot.values().next().value.p;
+}
+
+function activeCaster(room, p, t, castType) {
+  let best = null;
+  let bestD2 = Infinity;
+  for (const o of room.players.values()) {
+    if (o.slot < 0 || o.slot === p.slot || o.castType !== castType || t >= o.castUntil) continue;
+    const dx = o.x - p.x, dy = o.y - p.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = o; }
+  }
+  return best;
+}
+
+function disruptionAggressor(room, p, t, kind) {
+  const sole = soleEnemyNormalPainter(room, p, t);
+  if (sole) return sole;
+  const caster = activeCaster(room, p, t, kind === 'erase' ? 'erase' : 'inkjam');
+  if (caster) return caster;
+  return closestActorForSlot(room, p, topEnemySlotOf(room, p), t);
 }
 
 // Chance a bot misreads a CURRENTLY-bad powerup as worth grabbing. Reasons only
@@ -422,6 +512,64 @@ function chooseTerritoryTarget(p, room, ai, band) {
   ai.aimBias = gauss() * ai.aimError;
 }
 
+function chooseEraseTarget(p, room, ai, band, focusSlot = -1) {
+  const blank = room.coarseBlank;
+  const own = room.coarseOwn;
+  if (!blank) {
+    ai.targetX = WORLD_W * 0.5 + gauss() * 220;
+    ai.targetY = WORLD_H * 0.5 + gauss() * 160;
+    return;
+  }
+
+  const ZW = COARSE_ZW, ZH = COARSE_ZH;
+  const behind = Math.max(0, band);
+  const leader = leaderSlotOf(room);
+  const focus = focusSlot >= 0 && focusSlot !== p.slot ? focusSlot : -1;
+  const enemyW = 1.2 + 0.5 * ai.contest;
+  const leaderW = (leader >= 0 && leader !== p.slot) ? (0.8 + 0.9 * behind) : 0;
+  const focusW = focus >= 0 ? (0.8 + 1.25 * ai.vengeance) : 0;
+
+  const occ = new Int8Array(ZW * ZH);
+  for (const o of room.players.values()) {
+    if (o.slot < 0) continue;
+    const zx = Math.min(ZW - 1, (o.x / ZONE_W_PX) | 0);
+    const zy = Math.min(ZH - 1, (o.y / ZONE_H_PX) | 0);
+    occ[zy * ZW + zx]++;
+  }
+  const myZX = Math.min(ZW - 1, (p.x / ZONE_W_PX) | 0);
+  const myZY = Math.min(ZH - 1, (p.y / ZONE_H_PX) | 0);
+
+  let b1 = -Infinity, b2 = -Infinity, b3 = -Infinity;
+  let x1 = p.x, y1 = p.y, x2 = p.x, y2 = p.y, x3 = p.x, y3 = p.y;
+  for (let zy = 0; zy < ZH; zy++) {
+    for (let zx = 0; zx < ZW; zx++) {
+      const z = zy * ZW + zx;
+      const b = blank[z];
+      const ownC = own[z * MAX_PLAYERS + p.slot];
+      const enemy = Math.max(0, ZONE_CELLS - b - ownC);
+      let value = enemy * enemyW - ownC * 2.4 - b * 0.22;
+      if (leaderW) value += own[z * MAX_PLAYERS + leader] * leaderW;
+      if (focusW && focus !== leader) value += own[z * MAX_PLAYERS + focus] * focusW;
+      const cxp = (zx + 0.5) * ZONE_W_PX;
+      const cyp = (zy + 0.5) * ZONE_H_PX;
+      const dist = Math.hypot(cxp - p.x, cyp - p.y);
+      const crowd = Math.max(0, occ[z] - (zx === myZX && zy === myZY ? 1 : 0));
+      const score = value / (1 + dist * 0.0028) - crowd * 12;
+      if (score > b1) { b3 = b2; x3 = x2; y3 = y2; b2 = b1; x2 = x1; y2 = y1; b1 = score; x1 = cxp; y1 = cyp; }
+      else if (score > b2) { b3 = b2; x3 = x2; y3 = y2; b2 = score; x2 = cxp; y2 = cyp; }
+      else if (score > b3) { b3 = score; x3 = cxp; y3 = cyp; }
+    }
+  }
+
+  const r = Math.random();
+  let px = x1, py = y1;
+  if (r > 0.88 && b3 > -Infinity) { px = x3; py = y3; }
+  else if (r > 0.64 && b2 > -Infinity) { px = x2; py = y2; }
+  ai.targetX = clamp(px + gauss() * (ZONE_W_PX * 0.25), BRUSH_R, WORLD_W - BRUSH_R);
+  ai.targetY = clamp(py + gauss() * (ZONE_H_PX * 0.25), BRUSH_R, WORLD_H - BRUSH_R);
+  ai.aimBias = gauss() * ai.aimError;
+}
+
 // Keep bots off the very boundary WITHOUT pulling them away from the edges (we
 // want edges painted). Only nudge when a bot is close to a wall AND heading
 // further into it; the nudge cancels the into-wall component, leaving motion
@@ -485,6 +633,111 @@ function rivalRepel(room, p) {
   return { vx, vy };
 }
 
+function setTargetNearActor(p, ai, target, velocitySeconds) {
+  const vx = Number.isFinite(target.vx) ? target.vx : 0;
+  const vy = Number.isFinite(target.vy) ? target.vy : 0;
+  ai.targetX = clamp(target.x + vx * velocitySeconds + gauss() * BRUSH_R * 0.7, BRUSH_R, WORLD_W - BRUSH_R);
+  ai.targetY = clamp(target.y + vy * velocitySeconds + gauss() * BRUSH_R * 0.7, BRUSH_R, WORLD_H - BRUSH_R);
+  ai.aimBias = gauss() * ai.aimError * 0.45;
+}
+
+function revengeSpark(ai, behind, leading, targetIsLeader) {
+  const chance = clamp(
+    REVENGE_SPARK_BASE
+      + REVENGE_SPARK_VENGEANCE * ai.vengeance
+      + REVENGE_SPARK_BEHIND * behind
+      + (targetIsLeader ? REVENGE_SPARK_LEADER_BONUS : 0)
+      - REVENGE_SPARK_LEADING_PENALTY * leading,
+    0,
+    REVENGE_SPARK_CAP
+  );
+  return Math.random() < chance;
+}
+
+function beginDisruptionPlan(p, room, ai, t, band, kind) {
+  const target = disruptionAggressor(room, p, t, kind);
+  const leader = leaderSlotOf(room);
+  const behind = Math.max(0, band);
+  const leading = Math.max(0, -band);
+  ai.disruptTargetId = target ? target.id : 0;
+  ai.disruptTargetSlot = target ? target.slot : topEnemySlotOf(room, p);
+  ai.disruptRetargetAt = 0;
+  ai.retargetAt = 0;
+
+  if (kind === 'erase') {
+    if (!target) {
+      ai.disruptMode = 'objective';
+      return;
+    }
+    if (!revengeSpark(ai, behind, leading, target.slot === leader)) {
+      ai.disruptMode = 'objective';
+      return;
+    }
+    const huntProb = clamp(
+      ERASER_HUNT_BASE
+        + ERASER_HUNT_VENGEANCE * ai.vengeance
+        + ERASER_HUNT_BEHIND * behind
+        - 0.08 * leading,
+      0.18,
+      ERASER_HUNT_CAP
+    );
+    ai.disruptMode = Math.random() < huntProb ? 'hunt' : 'turf';
+  } else {
+    if (!target) {
+      ai.disruptMode = 'objective';
+      return;
+    }
+    if (!revengeSpark(ai, behind, leading, target.slot === leader)) {
+      ai.disruptMode = 'objective';
+      return;
+    }
+    const shadowProb = clamp(
+      INKJAM_SHADOW_BASE
+        + INKJAM_SHADOW_VENGEANCE * ai.vengeance
+        + INKJAM_SHADOW_BEHIND * behind
+        - 0.18 * leading,
+      0.02,
+      INKJAM_SHADOW_CAP
+    );
+    ai.disruptMode = Math.random() < shadowProb ? 'shadow' : 'objective';
+  }
+}
+
+function currentDisruptionTarget(room, p, ai, t, normalOnly = false) {
+  const byId = ai.disruptTargetId ? room.players.get(ai.disruptTargetId) : null;
+  if (byId && byId.slot >= 0 && byId.slot !== p.slot && (!normalOnly || isNormalPainter(byId, t))) return byId;
+  return closestActorForSlot(room, p, ai.disruptTargetSlot, t, normalOnly);
+}
+
+function refreshDisruptionTarget(p, room, ai, t, band, kind) {
+  if (kind === 'erase') {
+    if (ai.disruptMode === 'hunt') {
+      const target = currentDisruptionTarget(room, p, ai, t, true);
+      if (target) {
+        setTargetNearActor(p, ai, target, -0.18);
+        ai.disruptRetargetAt = t + rand(DISRUPT_HUNT_RETARGET_MIN_MS, DISRUPT_HUNT_RETARGET_MAX_MS);
+        return;
+      }
+      ai.disruptMode = 'turf';
+    }
+    chooseEraseTarget(p, room, ai, band, ai.disruptMode === 'turf' ? ai.disruptTargetSlot : -1);
+    ai.disruptRetargetAt = t + rand(ai.retargetMs[0], ai.retargetMs[1]) * DISRUPT_TURF_RETARGET_SCALE;
+    return;
+  }
+
+  if (ai.disruptMode === 'shadow') {
+    const target = currentDisruptionTarget(room, p, ai, t, false);
+    if (target) {
+      setTargetNearActor(p, ai, target, 0.20);
+      ai.disruptRetargetAt = t + rand(DISRUPT_SHADOW_RETARGET_MIN_MS, DISRUPT_SHADOW_RETARGET_MAX_MS);
+      return;
+    }
+    ai.disruptMode = 'objective';
+  }
+  chooseTerritoryTarget(p, room, ai, band);
+  ai.disruptRetargetAt = t + rand(ai.retargetMs[0], ai.retargetMs[1]) * DISRUPT_OBJECTIVE_RETARGET_SCALE;
+}
+
 function updateBot(p, room, dt, t) {
   const ai = p.ai;
   if (!ai) { p.mx = 0; p.my = 0; return; }
@@ -492,21 +745,24 @@ function updateBot(p, room, dt, t) {
   // 1. Hesitation: coast (zero input -> damping eases to a stop).
   if (t < ai.thinkUntil) { p.mx = 0; p.my = 0; return; }
 
+  const band = rubberBand(room, p);
+
   // Disrupted: can't paint normally right now -- ink-jammed / self-jammed (no paint
-  // lands) or caught in an erase field (moving WIPES paint). Either way, don't waste
-  // the clock: a rare bot (1%) just shrugs and waits it out for human flavor, but
-  // everyone else beelines to the best territory zone (chosen below), skipping the
-  // paint-field it can't use. That zone is enemy-heavy, so an active erase even works
-  // in our favor there -- and the bot's parked on prime ground when the effect lifts.
-  // Powerup grabs still apply -- a pickup is worth having disrupted or not.
+  // lands) or caught in an erase field (moving WIPES paint). Powerup grabs still
+  // apply, but otherwise the bot chooses one episode-level response: objective
+  // play, erase high-value enemy turf, or occasionally shadow/hunt the likely
+  // aggressor. That keeps revenge visible without turning every bot into a thrower.
   const disrupted = t < p.noPaintUntil || t < p.erasingUntil;
+  const disruptKind = t < p.noPaintUntil ? 'nopaint' : 'erase';
   if (disrupted) {
-    const sig = Math.max(p.noPaintUntil, p.erasingUntil);   // one decision per episode
-    if (ai.disruptSeen !== sig) { ai.disruptSeen = sig; ai.disruptIdle = Math.random() < 0.01; }
+    const sig = `${disruptKind}:${Math.max(p.noPaintUntil, p.erasingUntil)}`;   // one decision per episode
+    if (ai.disruptSeen !== sig) {
+      ai.disruptSeen = sig;
+      ai.disruptIdle = Math.random() < DISRUPT_IDLE_BASE * (1 - 0.65 * ai.vengeance);
+      beginDisruptionPlan(p, room, ai, t, band, disruptKind);
+    }
     if (ai.disruptIdle) { p.mx = 0; p.my = 0; return; }
   }
-
-  const band = rubberBand(room, p);
 
   // 2. Powerup priority. A bot instinctively leans toward a powerup whose race it
   // can win, then partway there "reads the icon" and forms a verdict: commit, or
@@ -541,7 +797,10 @@ function updateBot(p, room, dt, t) {
       if (t >= ai.puJudgeAt || dist < BRUSH_R * 8) {
         const bad = BAD_POWERUPS.has(pu.type);
         ai.puVerdict = (!bad || Math.random() < badGrabChance(pu, ai, dist, t)) ? 'go' : 'avoid';
-        if (ai.puVerdict === 'avoid') ai.retargetAt = 0;      // peel off -> re-plan territory now
+        if (ai.puVerdict === 'avoid') {
+          ai.retargetAt = 0;
+          ai.disruptRetargetAt = 0;                            // peel off -> re-plan now
+        }
       }
     }
     // Lean/commit toward it unless judged "avoid" (then steer clear of the pickup).
@@ -553,23 +812,29 @@ function updateBot(p, room, dt, t) {
     ai.puReadType = null;
     ai.puVerdict = 'go';
     ai.retargetAt = 0;
+    ai.disruptRetargetAt = 0;
   }
 
   // 3. Territory (only when not chasing a powerup).
   if (!urgent) {
-    if (ai.targetX === undefined || t >= ai.retargetAt) {
+    if (disrupted) {
+      if (ai.targetX === undefined || t >= ai.disruptRetargetAt) {
+        refreshDisruptionTarget(p, room, ai, t, band, disruptKind);
+      }
+    } else if (ai.targetX === undefined || t >= ai.retargetAt) {
       let interval = rand(ai.retargetMs[0], ai.retargetMs[1]);
       if (band > 0) interval *= (1 - 0.45 * band);            // losing -> re-plan sooner
       else interval *= (1 + 0.4 * -band);                     // leading -> dawdle
       ai.retargetAt = t + interval;
       const pauseProb = ai.thinkProb * (1 - 0.7 * Math.max(0, band));
-      if (!disrupted && Math.random() < pauseProb) ai.thinkUntil = t + rand(ai.thinkMs[0], ai.thinkMs[1]);
+      if (Math.random() < pauseProb) ai.thinkUntil = t + rand(ai.thinkMs[0], ai.thinkMs[1]);
       chooseTerritoryTarget(p, room, ai, band);
     }
     // Reached the goal -> re-plan promptly so the bot keeps sweeping, not idling.
     const dx0 = ai.targetX - p.x, dy0 = ai.targetY - p.y;
     if (dx0 * dx0 + dy0 * dy0 < (BRUSH_R * 2.5) * (BRUSH_R * 2.5)) {
-      ai.retargetAt = Math.min(ai.retargetAt, t + 100);
+      if (disrupted) ai.disruptRetargetAt = Math.min(ai.disruptRetargetAt, t + 100);
+      else ai.retargetAt = Math.min(ai.retargetAt, t + 100);
     }
   }
 
