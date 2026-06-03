@@ -133,7 +133,7 @@ html, body {
 }
 .score-name { flex: 1; color: var(--muted); }
 .score-row.me .score-name { color: var(--ink); }
-.score-pct { font-weight: 700; }
+.score-pct { font-weight: 700; margin-left: auto; text-align: right; font-variant-numeric: tabular-nums; }
 
 .overlay {
   position: absolute;
@@ -196,7 +196,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 6px auto 0;
+  margin: 6px 0 0;
+  width: 100%;
   min-width: 220px;
 }
 .result-row {
@@ -377,21 +378,6 @@ html, body {
 }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.06); }
 .icon-btn[aria-pressed="true"] { opacity: 0.55; }
-
-/* Minimap: bird's-eye overview, bottom-right */
-#minimap {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  width: clamp(130px, 15vw, 200px);
-  aspect-ratio: 16 / 9;
-  height: auto;
-  background: transparent;            /* the canvas paints its own translucent bg */
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-}
 
 .link-btn {
   appearance: none;

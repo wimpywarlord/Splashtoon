@@ -339,7 +339,7 @@ function updateBot(p, room, dt, t) {
   // Ink-jammed: a few bots just shrug and wait it out -- no point moving when you
   // can't paint anyway (decided once per jam; most bots keep repositioning).
   if (t < p.noPaintUntil) {
-    if (ai.inkSeen !== p.noPaintUntil) { ai.inkSeen = p.noPaintUntil; ai.inkIdle = Math.random() < 0.18; }
+    if (ai.inkSeen !== p.noPaintUntil) { ai.inkSeen = p.noPaintUntil; ai.inkIdle = Math.random() < 0.04; }
     if (ai.inkIdle) { p.mx = 0; p.my = 0; return; }
   }
 

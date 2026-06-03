@@ -66,7 +66,6 @@ const els = {
   muteBtn: document.getElementById('mute-btn'),
   soundToggle: document.getElementById('sound-toggle'),
   resultsMenuBtn: document.getElementById('results-menu-btn'),
-  minimap: document.getElementById('minimap'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -801,7 +800,7 @@ function render() {
   const dpr = cam.dpr;
 
   // Landing page: the game is just a full-bleed BACKGROUND -- fill the viewport
-  // (cover), no platform / border / shadow / minimap.
+  // (cover), no platform / border / shadow.
   if (inMenu) {
     const z = Math.max(cam.cssW / G.worldW, cam.cssH / G.worldH);
     const ox = (cam.cssW - G.worldW * z) / 2;
@@ -859,39 +858,7 @@ function render() {
   // Brushes on top, UNCLIPPED, so they lean over the platform edge.
   worldTf();
   drawActors();
-
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  drawMinimap();
-}
-
-// Bird's-eye overview: whole arena scaled down with paint + player dots, on a
-// translucent panel so it stays light over the board.
-function drawMiniDot(g, x, y, color, sx, sy, r, ring) {
-  g.beginPath();
-  g.arc(x * sx, y * sy, r, 0, Math.PI * 2);
-  g.fillStyle = color || '#fff';
-  g.fill();
-  if (ring) { g.lineWidth = Math.max(1, r * 0.5); g.strokeStyle = '#fff'; g.stroke(); }
-}
-
-function drawMinimap() {
-  const mm = els.minimap;
-  if (!mm) return;
-  const g = mm._ctx || (mm._ctx = mm.getContext('2d'));
-  const MW = mm.width, MH = mm.height;
-  if (!MW || !MH) return;
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, MW, MH);
-  g.fillStyle = 'rgba(8, 9, 13, 0.34)';   // as transparent as stays readable
-  g.fillRect(0, 0, MW, MH);
-
-  const sx = MW / G.worldW, sy = MH / G.worldH;
-  if (paintLayer) { g.imageSmoothingEnabled = true; g.globalAlpha = 0.95; g.drawImage(paintLayer, 0, 0, MW, MH); g.globalAlpha = 1; }
-
-  const otherR = Math.max(1.5, MW * 0.013);
-  const meR = Math.max(2.5, MW * 0.02);
-  for (const r of remote.values()) drawMiniDot(g, r.rx, r.ry, palette[r.slot], sx, sy, otherR, false);
-  if (me.has && !spectating) drawMiniDot(g, me.x, me.y, palette[mySlot], sx, sy, meR, true);
 }
 
 // ---- Landing-page background: a purely LOCAL sim (no server) -----------------
@@ -925,15 +892,24 @@ const bgSim = {
   update(dt) {
     if (!this.agents.length) this.init();
     const W = G.worldW, H = G.worldH;
+    const margin = BRUSH_R * 7;
     for (const a of this.agents) {
       a.wanderPhase += dt * a.wanderFreq;
       a.dirAngle += Math.sin(a.wanderPhase) * a.turnRate * dt;
+      // Smoothly steer away from walls (blend an inward push into the heading)
+      // instead of hard-reflecting -- no jittery bouncing/scraping at the edges.
+      let ax = 0, ay = 0;
+      if (a.x < margin) ax += 1 - a.x / margin;
+      else if (a.x > W - margin) ax -= 1 - (W - a.x) / margin;
+      if (a.y < margin) ay += 1 - a.y / margin;
+      else if (a.y > H - margin) ay -= 1 - (H - a.y) / margin;
+      if (ax || ay) {
+        a.dirAngle = Math.atan2(Math.sin(a.dirAngle) + ay * 2.2, Math.cos(a.dirAngle) + ax * 2.2);
+      }
       a.x += Math.cos(a.dirAngle) * a.baseSpeed * dt;
       a.y += Math.sin(a.dirAngle) * a.baseSpeed * dt;
-      if (a.x < BRUSH_R) { a.x = BRUSH_R; a.dirAngle = Math.PI - a.dirAngle; }
-      else if (a.x > W - BRUSH_R) { a.x = W - BRUSH_R; a.dirAngle = Math.PI - a.dirAngle; }
-      if (a.y < BRUSH_R) { a.y = BRUSH_R; a.dirAngle = -a.dirAngle; }
-      else if (a.y > H - BRUSH_R) { a.y = H - BRUSH_R; a.dirAngle = -a.dirAngle; }
+      a.x = Math.max(BRUSH_R, Math.min(W - BRUSH_R, a.x));   // safety clamp
+      a.y = Math.max(BRUSH_R, Math.min(H - BRUSH_R, a.y));
       const c = Math.cos(a.dirAngle);
       if (c < -0.05) a.face = -1; else if (c > 0.05) a.face = 1;
       a.speed = a.baseSpeed;
@@ -1019,7 +995,7 @@ function showResults(msg) {
     return `<div class="result-row${meCls}">
       <span class="swatch" style="background:${palette[r.slot]}"></span>
       <span class="score-name" style="flex:1">${escapeHtml(name)}</span>
-      <span>${pct}%</span>
+      <span class="score-pct">${pct}%</span>
     </div>`;
   }).join('') || '<div class="sub">Nobody painted anything!</div>';
 
@@ -1092,19 +1068,11 @@ function resize() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // HUD hugs the board (timer/leaderboard/minimap sit at the platform corners).
+  // HUD hugs the board (timer + leaderboard sit at the platform corners).
   els.hud.style.left = `${cam.boardX}px`;
   els.hud.style.top = `${cam.boardY}px`;
   els.hud.style.width = `${bw}px`;
   els.hud.style.height = `${bh}px`;
-
-  // Size the minimap backing store for crisp DPR rendering.
-  if (els.minimap) {
-    const mw = els.minimap.clientWidth || 190;
-    const mh = els.minimap.clientHeight || Math.round(mw * G.worldH / G.worldW);
-    els.minimap.width = Math.round(mw * dpr);
-    els.minimap.height = Math.round(mh * dpr);
-  }
 }
 window.addEventListener('resize', resize);
 
