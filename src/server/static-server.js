@@ -10,6 +10,7 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.webp': 'image/webp',
   '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json',
 };
 
 function createStaticHandler(publicDir) {
