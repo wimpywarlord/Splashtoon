@@ -47,6 +47,12 @@ const ZONE_CELLS = (GRID_W / COARSE_ZW) * (GRID_H / COARSE_ZH);
 const ZONE_W_PX = WORLD_W / COARSE_ZW;
 const ZONE_H_PX = WORLD_H / COARSE_ZH;
 
+const BAD_PU_GAMBLE_BASE = 0.032;
+const BAD_PU_GAMBLE_EXTRA = 0.062;
+const BAD_PU_GAMBLE_GREED_BASE = 0.020;
+const BAD_PU_GAMBLE_GREED_EXTRA = 0.032;
+const BAD_PU_GAMBLE_CAP = 0.34;
+
 // Self-harming powerup types. Bots read the icon and mostly steer clear; see
 // badGrabChance for how often a flipping icon fools one into grabbing anyway.
 const BAD_POWERUPS = new Set(['slow', 'selfFreeze', 'selfInkjam', 'badMissile', 'tiny']);
@@ -224,7 +230,12 @@ function badGrabChance(pu, ai) {
   // most so on the rapidly-cycling icons.
   const extra = Math.max(0, switches - 1);
   const greed = ai ? ai.greed : 0;
-  return Math.min(0.025 + 0.06 * extra + greed * (0.015 + 0.03 * extra), 0.34);
+  return Math.min(
+    BAD_PU_GAMBLE_BASE
+      + BAD_PU_GAMBLE_EXTRA * extra
+      + greed * (BAD_PU_GAMBLE_GREED_BASE + BAD_PU_GAMBLE_GREED_EXTRA * extra),
+    BAD_PU_GAMBLE_CAP
+  );
 }
 
 // Short-range push away from a bad powerup the bot has chosen to skip, so "avoid"
