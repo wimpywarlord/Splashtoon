@@ -40,11 +40,8 @@ const {
   POWERUP_LATE_SPAWN_CHANCE,
   POWERUP_SPAWN_TRIES,
   POWERUP_SPAWN_CLEAR_R,
-  POWERUP_FAIR_BAND,
-  POWERUP_FAIR_K,
-  POWERUP_RUN_TARGET,
-  POWERUP_RUN_CLOSE,
-  POWERUP_CLOSE_SPAWN_CHANCE,
+  POWERUP_SPAWN_CONTEST_R,
+  POWERUP_SPAWN_CONTEST_MIN,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,
@@ -546,39 +543,38 @@ class Room {
     const t = now();
     const armsAt = t + POWERUP_TELEGRAPH_MS;       // grabbable only after the strike
     const margin = 90;
-    // Pick a spot for a FAIR but EXHILARATING race: sample candidates, keep ones where
-    // the nearest few players are about equally far (each within FAIR_BAND of the
-    // closest, up to FAIR_K contesters), then score them so the closest contester has a
-    // real sprint -- a nearest distance near RUN_TARGET, not a tap at the centroid --
-    // with a bonus per extra contester (3-4 way races beat 2-way). Never at anyone's
-    // feet (>= CLEAR_R). A lone player has no co-contesters, so spots by them never
-    // qualify -- spawns follow the scrum, and you can't farm pickups by hiding.
+    // Pick a RANDOM spot a few players can fairly race for -- >=2 within contest range
+    // and none at point-blank (no freebie). This inverts the old "furthest from everyone"
+    // bias: isolating yourself no longer farms pickups (your empty area has no
+    // contesters, so it isn't chosen) -- spawns follow the scrum. Falls back to any
+    // feet-clear spot if nobody's grouped up.
     const actives = [];
     for (const p of this.players.values()) if (p.slot >= 0) actives.push(p);
-    // Mostly a long dash; now and then a close quick-draw where first-to-move wins.
-    const runTarget = Math.random() < POWERUP_CLOSE_SPAWN_CHANCE ? POWERUP_RUN_CLOSE : POWERUP_RUN_TARGET;
-    const dists = [];
-    let best = Infinity;
-    let px = 0, py = 0, fbX = 0, fbY = 0, lsx = 0, lsy = 0, hasClear = false;
+    const feetR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
+    const contestR2 = POWERUP_SPAWN_CONTEST_R * POWERUP_SPAWN_CONTEST_R;
+    let px = 0, py = 0, lcx = 0, lcy = 0, lsx = 0, lsy = 0, hasClear = false, found = false;
+    let c2x = 0, c2y = 0, has2 = false;                   // best 2-player race seen (fallback)
     for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
       const x = margin + Math.random() * (WORLD_W - 2 * margin);
       const y = margin + Math.random() * (WORLD_H - 2 * margin);
       lsx = x; lsy = y;
-      dists.length = 0;
-      for (const p of actives) dists.push(Math.hypot(p.x - x, p.y - y));
-      dists.sort((a, b) => a - b);
-      if (!dists.length || dists[0] < POWERUP_SPAWN_CLEAR_R) continue;   // freebie at feet
-      fbX = x; fbY = y; hasClear = true;                                 // feet-clear fallback
-      // Largest k (<= FAIR_K) whose k nearest sit within FAIR_BAND of the closest.
-      let k = 1;
-      while (k < dists.length && k < POWERUP_FAIR_K && dists[k] - dists[0] <= POWERUP_FAIR_BAND) k++;
-      if (k < 2) continue;                                               // not a real race
-      // Lower is better: sprint length near this spawn's target, minus a bonus per
-      // extra contester (~one extra racer is worth being ~50px off the ideal run).
-      const score = Math.abs(dists[0] - runTarget) - 50 * k;
-      if (score < best) { best = score; px = x; py = y; }
+      let nearest2 = Infinity, contesters = 0;
+      for (const p of actives) {
+        const dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
+        if (d2 < nearest2) nearest2 = d2;
+        if (d2 < contestR2) contesters++;
+      }
+      if (nearest2 >= feetR2) {
+        lcx = x; lcy = y; hasClear = true;                              // feet-clear (last resort)
+        if (contesters >= POWERUP_SPAWN_CONTEST_MIN) { px = x; py = y; found = true; break; }  // ideal scrum
+        if (contesters >= 2 && !has2) { c2x = x; c2y = y; has2 = true; } // remember a 2-way race
+      }
     }
-    if (best === Infinity) { px = hasClear ? fbX : lsx; py = hasClear ? fbY : lsy; }
+    if (!found) {                                          // no full scrum -> 2-way, else feet-clear
+      if (has2) { px = c2x; py = c2y; }
+      else if (hasClear) { px = lcx; py = lcy; }
+      else { px = lsx; py = lsy; }
+    }
     const changes = pickPowerupSwitchCount();
     const type = pickWeightedPowerupType();
     this.powerups.push({

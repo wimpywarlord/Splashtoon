@@ -150,7 +150,7 @@ let pickupFades = [];      // fading pickup icons: [{x,y,type,start}]
 // drawPowerup), aligned with the bolt rather than the earlier shadow.
 const puFx = new Map();
 const BOLT_MS = 360;          // lightning-strike duration, measured from the strike
-const PU_TELEGRAPH_MS = 1100; // cloud disk gathers this long before the strike (match server)
+const PU_TELEGRAPH_MS = 500;  // portal opens this long before the strike (match server)
 let nowMs = 0;
 
 // Paint layer at grid resolution (1px per cell), scaled up on draw.
@@ -1000,38 +1000,63 @@ function lightningFlash(x, y, r, alpha) {
   ctx.fill();
 }
 
-// Gathering cloud before the strike (p: 0 -> 1 across the telegraph). A soft white MIST
-// oval -- a flat ground disk like the countdown disk, not a flat circle -- swells with
-// drifting puffs and charges brighter as the strike nears. Type-agnostic (no icon) so
-// the warning never leaks the good/bad identity.
-function drawPowerupShadow(x, y, p, id) {
-  const e = p * p * (3 - 2 * p);                   // smoothstep swell
-  const rx = 16 + 30 * e;                          // oval grows out
-  const ry = rx * 0.52;                            // flattened -> a disk lying on the ground
+// Opening portal before the strike (p: 0 -> 1 across the telegraph). An oval portal
+// irises open on the ground -- soft halo, a dark mouth with light rising from the depth,
+// a glowing 3D rim, a sweeping energy arc, and electric sparks crackling off the edge --
+// then the bolt strikes through it. The oval + depth keep it from reading as a flat
+// sticker on the paint. Type-agnostic (no icon) so it never leaks the good/bad identity.
+function drawPowerupPortal(x, y, p, id) {
+  const e = p * p * (3 - 2 * p);                          // smoothstep open
+  const rx = 8 + 21 * e;                                  // portal irises open
+  const ry = rx * 0.46;                                   // oval -> a portal lying in perspective
   ctx.save();
-  // Drifting puffs around the rim give a soft, cloudy edge.
-  const puffs = 6;
-  for (let i = 0; i < puffs; i++) {
-    const a = (i / puffs) * Math.PI * 2 + id;
-    const wob = 0.55 + 0.45 * Math.sin(nowMs * 0.0024 + i * 1.7 + id);
-    const cxp = x + Math.cos(a) * rx * 0.40;
-    const cyp = y + Math.sin(a) * ry * 0.40;
-    const pr = rx * (0.42 + 0.16 * wob);
-    const pa = 0.09 * e * (0.6 + 0.4 * wob);
-    const pg = ctx.createRadialGradient(cxp, cyp, 1, cxp, cyp, pr);
-    pg.addColorStop(0, `rgba(255,255,255,${pa})`);
-    pg.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = pg;
-    ctx.beginPath(); ctx.ellipse(cxp, cyp, pr, pr * 0.55, 0, 0, Math.PI * 2); ctx.fill();
-  }
-  // Core mist disk, brightening toward the strike (charge).
-  const core = 0.12 * e + 0.20 * e * e;
-  const g = ctx.createRadialGradient(x, y, 1, x, y, rx);
-  g.addColorStop(0, `rgba(255,255,255,${core})`);
-  g.addColorStop(0.55, `rgba(244,250,255,${core * 0.55})`);
-  g.addColorStop(1, 'rgba(244,250,255,0)');
-  ctx.fillStyle = g;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // Soft outer halo.
+  const halo = ctx.createRadialGradient(x, y, 1, x, y, rx * 1.7);
+  halo.addColorStop(0, `rgba(120,185,255,${0.18 * e})`);
+  halo.addColorStop(1, 'rgba(120,185,255,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.ellipse(x, y, rx * 1.7, ry * 1.7, 0, 0, Math.PI * 2); ctx.fill();
+  // Dark mouth -> reads as a hole punched in the surface, not a decal on the paint.
+  ctx.fillStyle = `rgba(6,10,24,${0.55 * e})`;
   ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+  // Light rising from the depth.
+  const depth = ctx.createRadialGradient(x, y, 1, x, y, rx * 0.9);
+  depth.addColorStop(0, `rgba(190,228,255,${0.55 * e})`);
+  depth.addColorStop(0.5, `rgba(80,145,240,${0.30 * e})`);
+  depth.addColorStop(1, 'rgba(20,45,95,0)');
+  ctx.fillStyle = depth;
+  ctx.beginPath(); ctx.ellipse(x, y, rx * 0.85, ry * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+  // Glowing rim + a thin inner lip -> a 3D edge.
+  ctx.lineWidth = 2.4; ctx.strokeStyle = `rgba(205,238,255,${0.9 * e})`;
+  ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.lineWidth = 1; ctx.strokeStyle = `rgba(120,180,255,${0.55 * e})`;
+  ctx.beginPath(); ctx.ellipse(x, y, rx * 0.88, ry * 0.88, 0, 0, Math.PI * 2); ctx.stroke();
+  // Energy arc sweeping the rim -> the portal feels alive.
+  const spin = nowMs * 0.005 + id * 2;
+  ctx.lineWidth = 2.6; ctx.strokeStyle = `rgba(255,255,255,${0.8 * e})`;
+  ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, spin, spin + 1.1); ctx.stroke();
+  // Electric sparks crackling off the rim, busier near the strike.
+  const burst = 0.5 + 0.5 * Math.sin(nowMs * 0.02 + id * 2.1);
+  const count = 1 + Math.floor(e * 4 + burst * 2);
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    let sx = x + Math.cos(a) * rx, sy = y + Math.sin(a) * ry;
+    const len = (4 + 12 * e) * (0.5 + Math.random() * 0.5);
+    const nx = Math.cos(a), ny = Math.sin(a) * 0.8;       // splay outward along the oval
+    const pts = [[sx, sy]];
+    const segs = 2 + ((Math.random() * 2) | 0);
+    for (let s = 1; s <= segs; s++) {
+      const f = s / segs;
+      sx += nx * (len / segs) + (Math.random() - 0.5) * 5 * (1 - f);
+      sy += ny * (len / segs) + (Math.random() - 0.5) * 5 * (1 - f);
+      pts.push([sx, sy]);
+    }
+    const alpha = (0.45 + 0.55 * Math.random()) * (0.4 + 0.6 * e);
+    ctx.globalAlpha = alpha * 0.5; ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 2.2; strokePath(pts);
+    ctx.globalAlpha = alpha; ctx.strokeStyle = '#eaf4ff'; ctx.lineWidth = 1; strokePath(pts);
+  }
   ctx.restore();
 }
 
@@ -1042,13 +1067,13 @@ function drawPowerup(pu) {
   const x = pu.x, y = pu.y + bob;
   const age = nowMs - fx.bornMs;
 
-  // Telegraph: a misty cloud disk gathers for PU_TELEGRAPH_MS, then the bolt strikes and
-  // the powerup lands. The warning gives nearby contesters a fair start; the icon stays
-  // hidden so the cloud never leaks the good/bad identity. liveAge measures time since
-  // the strike -- the pop/bolt/icon all key off it.
+  // Telegraph: an oval portal opens for PU_TELEGRAPH_MS, then the bolt strikes through it
+  // and the powerup lands. The warning gives nearby contesters a fair start; the icon
+  // stays hidden so the portal never leaks the good/bad identity. liveAge measures time
+  // since the strike -- the pop/bolt/icon all key off it.
   const liveAge = age - PU_TELEGRAPH_MS;
-  if (liveAge < 0) { drawPowerupShadow(pu.x, pu.y, age / PU_TELEGRAPH_MS, pu.id); return; }
-  // The crack lands with the bolt, not with the shadow -- once per powerup.
+  if (liveAge < 0) { drawPowerupPortal(pu.x, pu.y, age / PU_TELEGRAPH_MS, pu.id); return; }
+  // The crack lands with the bolt, not with the portal -- once per powerup.
   if (!fx.struck) {
     fx.struck = true;
     if (phase === 'active' && GameAudio && GameAudio.powerupSpawn) GameAudio.powerupSpawn();

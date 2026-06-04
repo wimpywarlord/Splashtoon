@@ -1043,20 +1043,12 @@ body.in-menu #legend { display: block; }
 .legend-row .pu-avatar { --pu-size: 28px; box-shadow: 0 0 0 1px var(--st-border); }
 .legend-name { flex: none; font-weight: 700; }
 .legend-desc { color: var(--st-muted-fg); }
-.legend-note {
-  margin-top: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--st-border);
-  font-size: 12px;
-  color: var(--st-muted-fg);
-}
-
 /* Brand lockup: the full "Battle Painter" wordmark SVG carries the brand on its
    own (script lettering + brush + splashes), so no companion text element. */
 .brand { display: inline-flex; align-items: center; }
 .brand-mark {
   width: auto;
-  height: 140px;
+  height: 175px;
   flex: none;
   object-fit: contain;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
@@ -1147,7 +1139,7 @@ body.in-menu #legend { display: block; }
     width: 100%;
   }
   .brand-mark {
-    height: 100px;
+    height: 120px;
   }
   #legend { top: 12px; right: 12px; }
   #legend-btn { height: 44px; font-size: 16px; gap: 9px; padding: 0 15px 0 9px; }
@@ -1219,7 +1211,7 @@ body.in-menu #legend { display: block; }
     --landing-title-size: 40px;
   }
   .brand-mark {
-    height: 76px;
+    height: 90px;
   }
   .start-form {
     gap: 8px;
