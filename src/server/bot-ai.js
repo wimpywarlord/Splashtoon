@@ -18,10 +18,10 @@
 //                     grid. Painting over an enemy cell is a 2-point swing
 //                     (they -1, you +1) vs +1 for blank, so enemy turf is valued
 //                     ~2x blank, and when behind the bot gangs the LEADER's turf.
-//   4. Revenge      - while jammed/erasing, some personalities punish the likely
-//                     power-up aggressor. Erasers either hunt the one still
-//                     painting or wipe high-value enemy turf; ink-jammed bots may
-//                     shadow the aggressor so they can overpaint when the jam ends.
+//   4. Disruption   - while jammed/erasing, bots keep useful motion. Erasers may
+//                     punish the likely power-up aggressor by hunting painters or
+//                     wiping high-value enemy turf; ink-jammed bots reposition for
+//                     territory/powerups instead of orbiting a live actor.
 //
 // Rubber-banding keys off the score leader: a losing bot reacts faster, hesitates
 // less, and contests harder; a runaway leader eases off. So the better the human
@@ -75,14 +75,8 @@ const ERASER_HUNT_BASE = 0.24;
 const ERASER_HUNT_VENGEANCE = 0.30;
 const ERASER_HUNT_BEHIND = 0.08;
 const ERASER_HUNT_CAP = 0.62;
-const INKJAM_SHADOW_BASE = 0.20;
-const INKJAM_SHADOW_VENGEANCE = 0.24;
-const INKJAM_SHADOW_BEHIND = 0.06;
-const INKJAM_SHADOW_CAP = 0.52;
 const DISRUPT_HUNT_RETARGET_MIN_MS = 150;
 const DISRUPT_HUNT_RETARGET_MAX_MS = 250;
-const DISRUPT_SHADOW_RETARGET_MIN_MS = 320;
-const DISRUPT_SHADOW_RETARGET_MAX_MS = 520;
 const DISRUPT_TURF_RETARGET_SCALE = 0.65;
 const DISRUPT_OBJECTIVE_RETARGET_SCALE = 0.75;
 // Like a human who wasn't watching that spot, a bot may miss the spawn telegraph
@@ -716,52 +710,40 @@ function revengeSpark(ai, behind, leading, targetIsLeader) {
 }
 
 function beginDisruptionPlan(p, room, ai, t, band, kind) {
+  ai.disruptRetargetAt = 0;
+  ai.retargetAt = 0;
+
+  if (kind !== 'erase') {
+    ai.disruptTargetId = 0;
+    ai.disruptTargetSlot = topEnemySlotOf(room, p);
+    ai.disruptMode = 'objective';
+    return;
+  }
+
   const target = disruptionAggressor(room, p, t, kind);
   const leader = leaderSlotOf(room);
   const behind = Math.max(0, band);
   const leading = Math.max(0, -band);
   ai.disruptTargetId = target ? target.id : 0;
   ai.disruptTargetSlot = target ? target.slot : topEnemySlotOf(room, p);
-  ai.disruptRetargetAt = 0;
-  ai.retargetAt = 0;
 
-  if (kind === 'erase') {
-    if (!target) {
-      ai.disruptMode = 'objective';
-      return;
-    }
-    if (!revengeSpark(ai, behind, leading, target.slot === leader)) {
-      ai.disruptMode = 'objective';
-      return;
-    }
-    const huntProb = clamp(
-      ERASER_HUNT_BASE
-        + ERASER_HUNT_VENGEANCE * ai.vengeance
-        + ERASER_HUNT_BEHIND * behind
-        - 0.08 * leading,
-      0.18,
-      ERASER_HUNT_CAP
-    );
-    ai.disruptMode = Math.random() < huntProb ? 'hunt' : 'turf';
-  } else {
-    if (!target) {
-      ai.disruptMode = 'objective';
-      return;
-    }
-    if (!revengeSpark(ai, behind, leading, target.slot === leader)) {
-      ai.disruptMode = 'objective';
-      return;
-    }
-    const shadowProb = clamp(
-      INKJAM_SHADOW_BASE
-        + INKJAM_SHADOW_VENGEANCE * ai.vengeance
-        + INKJAM_SHADOW_BEHIND * behind
-        - 0.18 * leading,
-      0.02,
-      INKJAM_SHADOW_CAP
-    );
-    ai.disruptMode = Math.random() < shadowProb ? 'shadow' : 'objective';
+  if (!target) {
+    ai.disruptMode = 'objective';
+    return;
   }
+  if (!revengeSpark(ai, behind, leading, target.slot === leader)) {
+    ai.disruptMode = 'objective';
+    return;
+  }
+  const huntProb = clamp(
+    ERASER_HUNT_BASE
+      + ERASER_HUNT_VENGEANCE * ai.vengeance
+      + ERASER_HUNT_BEHIND * behind
+      - 0.08 * leading,
+    0.18,
+    ERASER_HUNT_CAP
+  );
+  ai.disruptMode = Math.random() < huntProb ? 'hunt' : 'turf';
 }
 
 function currentDisruptionTarget(room, p, ai, t, normalOnly = false) {
@@ -786,15 +768,6 @@ function refreshDisruptionTarget(p, room, ai, t, band, kind) {
     return;
   }
 
-  if (ai.disruptMode === 'shadow') {
-    const target = currentDisruptionTarget(room, p, ai, t, false);
-    if (target) {
-      setTargetNearActor(p, ai, target, 0.20);
-      ai.disruptRetargetAt = t + rand(DISRUPT_SHADOW_RETARGET_MIN_MS, DISRUPT_SHADOW_RETARGET_MAX_MS);
-      return;
-    }
-    ai.disruptMode = 'objective';
-  }
   chooseTerritoryTarget(p, room, ai, band);
   ai.disruptRetargetAt = t + rand(ai.retargetMs[0], ai.retargetMs[1]) * DISRUPT_OBJECTIVE_RETARGET_SCALE;
 }
@@ -811,8 +784,8 @@ function updateBot(p, room, dt, t) {
   // Disrupted: can't paint normally right now -- ink-jammed / self-jammed (no paint
   // lands) or caught in an erase field (moving WIPES paint). Powerup grabs still
   // apply, but otherwise the bot chooses one episode-level response: objective
-  // play, erase high-value enemy turf, or occasionally shadow/hunt the likely
-  // aggressor. That keeps revenge visible without turning every bot into a thrower.
+  // play, erase high-value enemy turf, or occasionally hunt the likely eraser
+  // aggressor. No-paint avoids live actor shadowing because it creates orbit tells.
   const disrupted = t < p.noPaintUntil || t < p.erasingUntil;
   const disruptKind = t < p.noPaintUntil ? 'nopaint' : 'erase';
   if (disrupted) {
