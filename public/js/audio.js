@@ -25,7 +25,7 @@
   let muted = false;
   let volume = 0.7;     // master (0..1)
   let musicOn = true;
-  let musicVol = 1;     // music category level (0..1), scales MUSIC_MIX
+  let musicVol = 0.75;  // music category level (0..1), scales MUSIC_MIX -- default a notch under full
   let sfxVol = 1;       // SFX category level (0..1), scales SFX_MIX
   let brushVol = 1;     // brush whoosh level (0..1), scales BRUSH_MIX
 

@@ -102,6 +102,8 @@ const els = {
   playersDec: document.getElementById('players-dec'),
   playersInc: document.getElementById('players-inc'),
   playersVal: document.getElementById('players-val'),
+  ping: document.getElementById('ping'),
+  pingVal: document.querySelector('#ping .ping-val'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -178,12 +180,15 @@ function connect() {
   const params = myName ? `?name=${encodeURIComponent(myName)}` : '';
   ws = new WebSocket(`${proto}://${location.host}/${params}`);
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
+  ws.onopen = startPing;
   // Reconnect only while in a match; the menu has no connection at all.
-  ws.onclose = () => { ws = null; if (!inMenu) setTimeout(connect, 1000); };
+  ws.onclose = () => { ws = null; stopPing(); hidePing(); if (!inMenu) setTimeout(connect, 1000); };
 }
 
 function disconnect() {
   if (ws) { try { ws.onclose = null; ws.close(); } catch (_) { /* ignore */ } ws = null; }
+  stopPing();
+  hidePing();
   remote.clear();
   me.has = false;
   spectating = true;
@@ -213,9 +218,43 @@ function requestResync() {
   send({ t: 'resync' });
 }
 
+// Live ping: a tiny app-level ping/pong over the match socket (every 2s, never per-frame),
+// smoothed (EMA) and shown in the top bar. No connection on the landing -> stays hidden there.
+let pingTimer = null;
+let pingMs = 0;
+function startPing() {
+  stopPing();
+  const tick = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) send({ t: 'ping', id: performance.now() });
+    pingTimer = setTimeout(tick, 2000);
+  };
+  tick();
+}
+function stopPing() {
+  if (pingTimer) { clearTimeout(pingTimer); pingTimer = null; }
+}
+function onPong(sentAt) {
+  if (typeof sentAt !== 'number') return;
+  const rtt = performance.now() - sentAt;
+  pingMs = pingMs ? pingMs * 0.7 + rtt * 0.3 : rtt;   // EMA so the readout doesn't jitter
+  const ms = Math.max(0, Math.round(pingMs));
+  if (els.pingVal) els.pingVal.textContent = ms + 'ms';
+  if (els.ping) {
+    els.ping.classList.add('live');
+    els.ping.classList.toggle('good', ms < 60);
+    els.ping.classList.toggle('ok', ms >= 60 && ms < 120);
+    els.ping.classList.toggle('bad', ms >= 120);
+  }
+}
+function hidePing() {
+  pingMs = 0;
+  if (els.ping) els.ping.classList.remove('live', 'good', 'ok', 'bad');
+}
+
 function handle(msg) {
   if (msg.roundMs != null) roundMs = msg.roundMs;   // round length for the pre-round clock
   switch (msg.t) {
+    case 'pong': { onPong(msg.id); break; }
     case 'init': {
       myId = msg.id;
       currentRoomId = msg.roomId || '';
@@ -1848,7 +1887,7 @@ function startPlay() {
   // Slice by code point (not UTF-16 unit) so an emoji at the 16-char boundary
   // isn't split into a lone surrogate -- that would throw in encodeURIComponent
   // when we build the connect URL. The server re-sanitizes regardless.
-  myName = [...(els.nameInput ? els.nameInput.value : '').trim()].slice(0, 16).join('');
+  myName = [...(els.nameInput ? els.nameInput.value : '').trim()].slice(0, 10).join('');   // keep in sync with config MAX_NAME_LEN
   if (Store) Store.setName(myName);
   simStop();            // hand the shared world state back to the match pipeline
   inMenu = false;
@@ -1928,6 +1967,7 @@ const SIM_PU_TTL_MS = 6000;          // armed lifetime (POWERUP_TTL_MS)
 // course -- every lesson gets the stage to itself.
 const SIM_FIRST_SPAWN_MS = 1400;     // first portal after the visitor starts moving
 const SIM_SPAWN_GAP_MS = 900;        // breath between an effect ending and the next portal
+const SIM_SPAWN_JITTER_MS = 2200;    // random extra breath -- with pads fixed, WHEN is the surprise
 const SIM_RESPAWN_GAP_MS = 1500;     // pause after an unclaimed pickup expires
 const SIM_EFFECT_MS = {              // per-type effect windows (server *_MS)
   speed: 4000, slow: 4000, freeze: 3500, inkjam: 3500, erase: 5000,
@@ -3286,16 +3326,16 @@ function simMakeSwitches(armsAt) {
   return times.map((u) => Math.round(armsAt + u));
 }
 
-// Random board spot worth a chase: inside the world margin, not at your feet,
-// and not hidden under the landing UI (nav/legend/gear/popovers/toast). UI
-// rects are DOM, so candidates are tested in CSS px.
+// Fixed spawn pads, mirroring the server's POWERUP_PADS: center + the four quadrant
+// midpoints. Pick a random FREE pad that's clear of every brush and not hidden under
+// the landing UI (nav/legend/gear/popovers/toast -- DOM rects, so pads are tested in
+// CSS px); else take the farthest-from-anyone unblocked pad.
 function simSpawnPoint() {
   const z = Math.min(cam.cssW / G.worldW, (cam.cssH - (cam.barH || 0)) / G.worldH);
   const ox = (cam.cssW - G.worldW * z) / 2;
   const oy = cam.barH || 0;
-  const margin = 90;
-  const clearR2 = 160 * 160;             // no freebie at your feet (POWERUP_SPAWN_CLEAR_R)
-  const pad = SIM_POWERUP_R * z + 18;
+  const clearR2 = 250 * 250;             // no freebie at anyone's feet (POWERUP_PAD_CLEAR_R)
+  const uiPad = SIM_POWERUP_R * z + 18;
   const blockers = [];
   for (const sel of ['#bottom-nav', '#legend', '#legend-menu', '#landing-settings', '#settings-menu', '#sim-toast']) {
     const el = document.querySelector(sel);
@@ -3303,23 +3343,33 @@ function simSpawnPoint() {
     const r = el.getBoundingClientRect();
     if (r.width && r.height) blockers.push(r);
   }
-  const feet = [];
-  for (const a of SIM.players.values()) feet.push({ x: a.x, y: a.y });
-  // Never drop a powerup on a brush. Keep the roomiest (farthest-from-anyone) non-blocked
-  // sample as a fallback so a crowded board (up to 6 players) can't force a point-blank spawn.
-  let best = { x: G.worldW / 2, y: G.worldH / 2 };
-  let bestN2 = -1;
-  for (let i = 0; i < 48; i++) {
-    const x = margin + Math.random() * (G.worldW - 2 * margin);
-    const y = margin + Math.random() * (G.worldH - 2 * margin);
+  const pads = [
+    [G.worldW * 0.25, G.worldH * 0.25],
+    [G.worldW * 0.75, G.worldH * 0.25],
+    [G.worldW * 0.50, G.worldH * 0.50],
+    [G.worldW * 0.25, G.worldH * 0.75],
+    [G.worldW * 0.75, G.worldH * 0.75],
+  ];
+  const taken = new Set();
+  for (const pu of powerups) if (pu.pad != null) taken.add(pu.pad);
+  const open = [];
+  let farIdx = -1, farD2 = -1;
+  for (let i = 0; i < pads.length; i++) {
+    if (taken.has(i)) continue;
+    const [x, y] = pads[i];
     const cx = ox + x * z, cy = oy + y * z;
-    if (blockers.some((r) => cx > r.left - pad && cx < r.right + pad && cy > r.top - pad && cy < r.bottom + pad)) continue;
+    if (blockers.some((r) => cx > r.left - uiPad && cx < r.right + uiPad && cy > r.top - uiPad && cy < r.bottom + uiPad)) continue;
     let n2 = Infinity;
-    for (const f of feet) { const d2 = (f.x - x) * (f.x - x) + (f.y - y) * (f.y - y); if (d2 < n2) n2 = d2; }
-    if (n2 >= clearR2) return { x, y };                  // clear of every brush -> use it
-    if (n2 > bestN2) { bestN2 = n2; best = { x, y }; }   // else remember the roomiest spot
+    for (const a of SIM.players.values()) {
+      const d2 = (a.x - x) * (a.x - x) + (a.y - y) * (a.y - y);
+      if (d2 < n2) n2 = d2;
+    }
+    if (n2 >= clearR2) open.push(i);
+    if (n2 > farD2) { farD2 = n2; farIdx = i; }
   }
-  return best;
+  const idx = open.length ? open[Math.floor(Math.random() * open.length)] : farIdx;
+  if (idx < 0) return { x: G.worldW / 2, y: G.worldH / 2, pad: null };  // every pad UI-blocked
+  return { x: pads[idx][0], y: pads[idx][1], pad: idx };
 }
 
 function simSpawnPowerup(t) {
@@ -3332,6 +3382,7 @@ function simSpawnPowerup(t) {
     id: SIM.nextId++,
     x: Math.round(pos.x),
     y: Math.round(pos.y),
+    pad: pos.pad,
     type,
     armed: false,
     armsAt,
@@ -3354,7 +3405,7 @@ function simUpdatePowerups(t) {
   const before = powerups.length;
   powerups = powerups.filter((pu) => t < pu.expiresAt);
   if (powerups.length < before && !powerups.length) {
-    SIM.nextSpawnAt = Math.max(SIM.nextSpawnAt, t + SIM_RESPAWN_GAP_MS);
+    SIM.nextSpawnAt = Math.max(SIM.nextSpawnAt, t + SIM_RESPAWN_GAP_MS + Math.random() * SIM_SPAWN_JITTER_MS);
   }
 
   // Swept pickup test for EVERY non-echo actor -- the bots race you to these,
@@ -3374,7 +3425,7 @@ function simUpdatePowerups(t) {
       showSimToast(pu.type, a.id !== 'me');
       // The collected lesson holds the stage; the next portal waits until the
       // effect has fully run out (plus a breath) -- one power at a time.
-      SIM.nextSpawnAt = t + simLessonMs(pu.type) + SIM_SPAWN_GAP_MS;
+      SIM.nextSpawnAt = t + simLessonMs(pu.type) + SIM_SPAWN_GAP_MS + Math.random() * SIM_SPAWN_JITTER_MS;
     }
   }
 

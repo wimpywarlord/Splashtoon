@@ -55,6 +55,9 @@
         <span class="timer-val">2:00</span>
       </div>
       <div id="rank-right" class="rank-group"></div>
+      <!-- Live round-trip latency, shown only in a real match (hidden on the landing -- no
+           connection there). Fixed width + .topbar-balance compensation keeps the timer centered. -->
+      <div id="ping" aria-label="Ping" title="Round-trip latency"><span class="ping-dot" aria-hidden="true"></span><span class="ping-val"></span></div>
       <!-- Power-up legend (both scenes): avatar-stack trigger; the cheat-sheet
            popover is position:fixed so the bar's overflow can't clip it. Icons
            come from the powerups spritesheet via --pu-col (matches
@@ -67,7 +70,6 @@
             <span class="pu-avatar" style="--pu-col: 3"></span>
             <span class="pu-avatar" style="--pu-col: 4"></span>
           </span>
-          <span class="legend-label">Legend</span>
         </button>
       </div>
     </div>
@@ -186,7 +188,7 @@
         <div id="landing-title" class="landing-title">Start Multiplayer</div>
         <div class="nav-control-row">
           <form id="start-form" class="start-form" autocomplete="off" aria-labelledby="landing-title">
-            <input id="name-input" class="input" type="text" maxlength="16" placeholder="Enter Nickname" spellcheck="false" aria-label="Player name" />
+            <input id="name-input" class="input" type="text" maxlength="10" placeholder="Enter Nickname" spellcheck="false" aria-label="Player name" />
             <button id="play-btn" class="btn btn-primary play-btn" type="submit">
               <svg class="nav-icon nav-icon-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5.2v13.6L18.6 12 8 5.2z"></path></svg>
               <span>Play</span>

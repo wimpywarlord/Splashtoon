@@ -4,7 +4,8 @@
   "description": "Multiplayer paint .io game — most area painted in 120s wins.",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "ws": "^8.18.0"

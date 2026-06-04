@@ -32,16 +32,15 @@ const {
   COUNTDOWN_MS,
   POWERUP_EFFECT_MS,
   POWERUP_MAX,
-  POWERUP_SPAWN_MS,
+  POWERUP_SPAWN_MS_MIN,
+  POWERUP_SPAWN_MS_MAX,
   POWERUP_TTL_MS,
   POWERUP_R,
   POWERUP_TELEGRAPH_MS,
   POWERUP_LATE_NO_SPAWN_MS,
   POWERUP_LATE_SPAWN_CHANCE,
-  POWERUP_SPAWN_TRIES,
-  POWERUP_SPAWN_CLEAR_R,
-  POWERUP_SPAWN_CONTEST_R,
-  POWERUP_SPAWN_CONTEST_MIN,
+  POWERUP_PADS,
+  POWERUP_PAD_CLEAR_R,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,
@@ -109,6 +108,12 @@ function pickFlipType(exclude = null) {
     if (alts.length) type = alts[Math.floor(Math.random() * alts.length)];
   }
   return type;
+}
+
+// Fresh random gap before the next powerup -- the timing, not the location, is
+// where spawn unpredictability lives now (locations are fixed pads).
+function rollSpawnGap() {
+  return POWERUP_SPAWN_MS_MIN + Math.random() * (POWERUP_SPAWN_MS_MAX - POWERUP_SPAWN_MS_MIN);
 }
 
 function pickPowerupSwitchCount() {
@@ -179,8 +184,11 @@ function sanitizeName(raw) {
     cp === 0xfeff;                                     // BOM / zero-width no-break
   let s = Array.from(raw.normalize('NFC'), (ch) => (banned(ch.codePointAt(0)) ? '' : ch)).join('');
   s = s.replace(/(\p{M})\p{M}+/gu, '$1');   // Zalgo guard: a base keeps one mark, no towers
-  s = s.replace(/^\p{M}+/u, '');            // ...and a name can't lead with a mark
-  s = s.replace(/\s+/g, ' ').trim();        // normalize/collapse whitespace
+  s = s.replace(/\s+/g, ' ');               // collapse any whitespace run to a single space
+  // Strip leading whitespace AND combining marks TOGETHER, after the collapse -- order
+  // matters: a leading space would otherwise hide a following mark from the strip, and a
+  // later trim would re-expose it (a name must never start with a mark). Then trailing ws.
+  s = s.replace(/^[\s\p{M}]+/u, '').replace(/\s+$/u, '');
   const cps = [...s];                       // count by code point, not UTF-16 unit
   if (cps.length > MAX_NAME_LEN) s = cps.slice(0, MAX_NAME_LEN).join('').trim();
   return s;
@@ -214,6 +222,7 @@ class Room {
     this.powerups = [];
     this.nextPowerupId = 1;
     this.lastSpawnAt = 0;
+    this.nextSpawnGap = rollSpawnGap();
     this.pendingImpacts = [];
     this.visualPaintEvents = [];
     this.echoIds = new Set();
@@ -562,46 +571,36 @@ class Room {
   spawnPowerup() {
     const t = now();
     const armsAt = t + POWERUP_TELEGRAPH_MS;       // grabbable only after the strike
-    const margin = 90;
-    // Pick a RANDOM spot a few players can fairly race for -- >=2 within contest range
-    // and none at point-blank (no freebie). This inverts the old "furthest from everyone"
-    // bias: isolating yourself no longer farms pickups (your empty area has no
-    // contesters, so it isn't chosen) -- spawns follow the scrum. Falls back to any
-    // feet-clear spot if nobody's grouped up.
-    const actives = [];
-    for (const p of this.players.values()) if (p.slot >= 0 && !p.isEcho) actives.push(p);
-    const feetR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
-    const contestR2 = POWERUP_SPAWN_CONTEST_R * POWERUP_SPAWN_CONTEST_R;
-    let px = 0, py = 0, lcx = 0, lcy = 0, hasClear = false, found = false;
-    let c2x = 0, c2y = 0, has2 = false;                   // best 2-player race seen (fallback)
-    let bx = WORLD_W / 2, by = WORLD_H / 2, bestNear = -1; // roomiest sample seen (anti point-blank)
-    for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
-      const x = margin + Math.random() * (WORLD_W - 2 * margin);
-      const y = margin + Math.random() * (WORLD_H - 2 * margin);
-      let nearest2 = Infinity, contesters = 0;
-      for (const p of actives) {
+    // Fixed pads (see config): pick a random FREE pad that's clear of every player --
+    // fairness comes from everyone knowing the spots, not from spawn geometry. If no
+    // pad is clear, take the free pad farthest from the nearest player.
+    const clearR2 = POWERUP_PAD_CLEAR_R * POWERUP_PAD_CLEAR_R;
+    const taken = new Set();
+    for (const pu of this.powerups) if (pu.pad != null) taken.add(pu.pad);
+    const open = [];
+    let farIdx = -1, farD2 = -1;
+    for (let i = 0; i < POWERUP_PADS.length; i++) {
+      if (taken.has(i)) continue;
+      const [x, y] = POWERUP_PADS[i];
+      let near2 = Infinity;
+      for (const p of this.players.values()) {
+        if (p.slot < 0 || p.isEcho) continue;
         const dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
-        if (d2 < nearest2) nearest2 = d2;
-        if (d2 < contestR2) contesters++;
+        if (d2 < near2) near2 = d2;
       }
-      if (nearest2 > bestNear) { bestNear = nearest2; bx = x; by = y; }  // farthest-from-anyone so far
-      if (nearest2 >= feetR2) {
-        lcx = x; lcy = y; hasClear = true;                              // feet-clear (last resort)
-        if (contesters >= POWERUP_SPAWN_CONTEST_MIN) { px = x; py = y; found = true; break; }  // ideal scrum
-        if (contesters >= 2 && !has2) { c2x = x; c2y = y; has2 = true; } // remember a 2-way race
-      }
+      if (near2 >= clearR2) open.push(i);
+      if (near2 > farD2) { farD2 = near2; farIdx = i; }
     }
-    if (!found) {                                          // no full scrum -> 2-way, feet-clear, else roomiest
-      if (has2) { px = c2x; py = c2y; }
-      else if (hasClear) { px = lcx; py = lcy; }
-      else { px = bx; py = by; }                           // never the last random sample (could be point-blank)
-    }
+    const padIdx = open.length ? open[Math.floor(Math.random() * open.length)] : farIdx;
+    if (padIdx < 0) return;                        // every pad occupied (can't happen: MAX < pads)
+    const [px, py] = POWERUP_PADS[padIdx];
     const changes = pickPowerupSwitchCount();
     const type = pickWeightedPowerupType();
     this.powerups.push({
       id: this.nextPowerupId++,
       x: Math.round(px),
       y: Math.round(py),
+      pad: padIdx,
       type,
       armsAt,
       expiresAt: armsAt + POWERUP_TTL_MS,
@@ -845,8 +844,9 @@ class Room {
     if (this.powerups.length) {
       this.powerups = this.powerups.filter((pu) => t < pu.expiresAt);
     }
-    if (this.powerups.length < POWERUP_MAX && t - this.lastSpawnAt >= POWERUP_SPAWN_MS) {
+    if (this.powerups.length < POWERUP_MAX && t - this.lastSpawnAt >= this.nextSpawnGap) {
       this.lastSpawnAt = t;                          // consume the slot even if we skip
+      this.nextSpawnGap = rollSpawnGap();
       const timeLeft = this.phaseEndsAt - t;
       // No point spawning one that can't even arm + be grabbed before time, and the
       // endgame mostly goes quiet: only ~1 in 10 powerups appears in the last 10s, so
@@ -881,6 +881,7 @@ class Room {
     this.pendingImpacts = [];
     this.visualPaintEvents = [];
     this.lastSpawnAt = now();
+    this.nextSpawnGap = rollSpawnGap();
     this.recomputeCoarse();           // fresh (all-blank) grid for round-start targeting
     this.lastCoarseAt = now();
     this.maintainPopulation();        // top up / release bots to hit MAX_PLAYERS
@@ -1136,6 +1137,8 @@ class Room {
       } else if (msg.t === 'rename') {
         const nm = sanitizeName(msg.name);
         if (nm) p.name = nm;
+      } else if (msg.t === 'ping') {
+        this.send(ws, { t: 'pong', id: msg.id });   // echo the client clock for round-trip latency
       } else if (msg.t === 'resync') {
         // Client's render loop resumed after a stall and lost the paint laid down
         // while it was paused. Replay the authoritative visual log. Throttled per

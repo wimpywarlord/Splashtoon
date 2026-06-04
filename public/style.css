@@ -698,10 +698,30 @@ html, body {
 }
 #rank-left { justify-content: flex-end; }     /* hug the timer from the left */
 #rank-right { justify-content: flex-start; }   /* hug the timer from the right */
-/* Pads the gear side so the timer stays truly centered between the two rank
-   groups: legend(133) - gear(34) - the extra flex gap(8) ≈ 91. Tune if the
-   legend button changes size. */
-.topbar-balance { width: 91px; flex: none; }
+/* Pads the gear side so the timer stays truly centered between the two rank groups.
+   Right fixed cluster = ping(58) + legend(133) + 2 gaps(16) = 207; left = gear(34) +
+   balance + 2 gaps(16); so balance = 207 - 50 = 157. Tune if legend/ping width changes. */
+.topbar-balance { width: 105px; flex: none; }
+/* Live ping readout (left of the legend). Fixed width + always in flow (visibility,
+   not display) so the centering math holds whether or not it's showing. */
+#ping {
+  flex: none;
+  width: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  visibility: hidden;       /* no connection on the landing -> reserve the box, stay invisible */
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+#ping.live { visibility: visible; }
+#ping .ping-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 5px currentColor; flex: none; }
+#ping.good { color: #3ddc84; }
+#ping.ok   { color: #ffd23f; }
+#ping.bad  { color: #ff6b6b; }
 /* Lifetime multiplayer stats (Wins / Streak): floats just right of the
    gear, OUT of the flex flow so the .topbar-balance centering math stays exact.
    Landing only (body.in-menu) -- in a match the bar stays clean. renderStats()
@@ -717,18 +737,18 @@ body.in-menu #topbar .stats { display: flex; }
 body.in-menu #topbar .stats:empty { display: none; }
 
 .lb-item {
-  display: inline-flex; align-items: center; gap: 6px; flex: none;
-  padding: 2px 9px 3px; font-size: 13px; line-height: 1.25; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  padding: 2px 6px 3px; font-size: 12px; line-height: 1.25; border-radius: 8px;
   transition: transform 0.45s ease;          /* FLIP slide when ranks shuffle */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
   white-space: nowrap;
 }
 .lb-item.me { font-weight: 700; background: rgba(255, 255, 255, 0.08); }
-.lb-crown { width: 15px; height: 15px; object-fit: contain; flex: none; }
-.lb-rank { color: var(--st-muted-fg); font-size: 11px; font-weight: 700; min-width: 13px; text-align: center; }
-.lb-name { color: var(--st-fg); max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-crown { width: 14px; height: 14px; object-fit: contain; flex: none; }
+.lb-rank { color: var(--st-muted-fg); font-size: 10px; font-weight: 700; min-width: 11px; text-align: center; }
+.lb-name { color: var(--st-fg); max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-pct { color: var(--st-fg); font-weight: 700; }
-.lb-item .swatch { width: 11px; height: 11px; }
+.lb-item .swatch { width: 10px; height: 10px; }
 
 /* Settings dropdown */
 #settings-menu {
@@ -995,9 +1015,9 @@ body.in-menu #bottom-nav { display: flex; }
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 0;
   height: 30px;
-  padding: 0 11px 0 7px;
+  padding: 0 8px;          /* icon-only: the "Legend" label was removed to free top-bar room */
   background: var(--st-secondary);
   border: 1px solid var(--st-border);
   color: var(--st-fg);

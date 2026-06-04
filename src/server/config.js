@@ -29,7 +29,7 @@ const ROOM_EMPTY_GRACE_MS = 30_000;
 
 // Bot AI tuning.
 // Bots consider any powerup within BOT_NOTICE_R (kept large -- ~the whole arena --
-// because powerups spawn far from the pack; the race/expiry assessment in
+// because spawn pads can be far from the pack; the race/expiry assessment in
 // worthChasing then decides who actually commits, so a far but uncontested
 // powerup still gets chased while contested ones go to the closest). COARSE_* is
 // the resolution of the per-room "opportunity grid" bots steer territory by.
@@ -52,7 +52,11 @@ const COUNTDOWN_MS = 3_000;   // pre-round 3-2-1 freeze so the whole field start
 
 const POWERUP_EFFECT_MS = 4_000;
 const POWERUP_MAX = 2;
-const POWERUP_SPAWN_MS = 13_000;
+// With spawn LOCATIONS fixed (see POWERUP_PADS), the WHEN carries the randomness:
+// each gap between spawns is drawn fresh from [MIN, MAX] (mean ~13s, the old fixed
+// cadence), so the pads are learnable but the next portal's timing never is.
+const POWERUP_SPAWN_MS_MIN = 7_000;
+const POWERUP_SPAWN_MS_MAX = 19_000;
 const POWERUP_TTL_MS = 6_000;
 const POWERUP_R = 28;
 // A spawned powerup first opens as an oval PORTAL for POWERUP_TELEGRAPH_MS, then a
@@ -66,17 +70,21 @@ const POWERUP_TELEGRAPH_MS = 500;
 // so a late pickup rarely decides the match.
 const POWERUP_LATE_NO_SPAWN_MS = 10_000;
 const POWERUP_LATE_SPAWN_CHANCE = 0.10;
-// Powerups spawn at a RANDOM spot that's genuinely contestable: at least
-// POWERUP_SPAWN_CONTEST_MIN players within POWERUP_SPAWN_CONTEST_R can race for it, but
-// none inside POWERUP_SPAWN_CLEAR_R (no freebie dropped at someone's feet). This inverts
-// the old "furthest from everyone" bias -- you can't farm pickups by drifting off alone,
-// since your empty area has no contesters and won't be chosen; spawns follow the scrum.
-// Degrades to a 2-player race, then any feet-clear spot, if a bigger scrum isn't
-// reachable. TRIES caps the sampling attempts.
-const POWERUP_SPAWN_TRIES = 56;
-const POWERUP_SPAWN_CLEAR_R = 160;
-const POWERUP_SPAWN_CONTEST_R = 380;
-const POWERUP_SPAWN_CONTEST_MIN = 3;
+// Powerups spawn on FIXED PADS: a handful of symmetric, learnable arena spots
+// (center + the four quadrant midpoints). Fairness comes from knowledge symmetry,
+// not geometry -- everyone knows where pickups can appear, so being closer when one
+// pops is positioning, not luck (the classic arena-game answer: Quake items, Brawl
+// Stars cubes). Rules: a pad must be POWERUP_PAD_CLEAR_R from every player (no
+// freebie at someone's feet) and not already holding a powerup; pick at random
+// among qualifying pads, else take the pad farthest from the nearest player.
+const POWERUP_PADS = [
+  [WORLD_W * 0.25, WORLD_H * 0.25],   // upper-left
+  [WORLD_W * 0.75, WORLD_H * 0.25],   // upper-right
+  [WORLD_W * 0.50, WORLD_H * 0.50],   // center
+  [WORLD_W * 0.25, WORLD_H * 0.75],   // lower-left
+  [WORLD_W * 0.75, WORLD_H * 0.75],   // lower-right
+];
+const POWERUP_PAD_CLEAR_R = 250;      // ~1.1s of travel at MAX_SPEED
 const BOOST_MS = POWERUP_EFFECT_MS;
 const BOOST_MULT = 2.0;
 const SLOW_MS = 4_000;
@@ -178,7 +186,7 @@ const COUNTDOWN_SPAWNS = [
 
 // Display-name length cap, in code points. Shared by the server sanitizer and the
 // client input so the limit is the same everywhere.
-const MAX_NAME_LEN = 16;
+const MAX_NAME_LEN = 10;
 
 module.exports = {
   PORT,
@@ -212,16 +220,15 @@ module.exports = {
   COUNTDOWN_MS,
   POWERUP_EFFECT_MS,
   POWERUP_MAX,
-  POWERUP_SPAWN_MS,
+  POWERUP_SPAWN_MS_MIN,
+  POWERUP_SPAWN_MS_MAX,
   POWERUP_TTL_MS,
   POWERUP_R,
   POWERUP_TELEGRAPH_MS,
   POWERUP_LATE_NO_SPAWN_MS,
   POWERUP_LATE_SPAWN_CHANCE,
-  POWERUP_SPAWN_TRIES,
-  POWERUP_SPAWN_CLEAR_R,
-  POWERUP_SPAWN_CONTEST_R,
-  POWERUP_SPAWN_CONTEST_MIN,
+  POWERUP_PADS,
+  POWERUP_PAD_CLEAR_R,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,

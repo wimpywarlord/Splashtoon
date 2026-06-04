@@ -43,6 +43,7 @@ const {
   COARSE_ZH,
   POWERUP_TTL_MS,
   POWERUP_R,
+  MAX_NAME_LEN,
 } = require('./config');
 
 const TWO_PI = Math.PI * 2;
@@ -188,7 +189,9 @@ const NAME_POOL = [
   'Plumbus', 'Squanch', 'Birdperson', 'NoobNoob', 'GazorpaZorp', 'Cthulhu', 'Nyarlathotep', 'Bombadil',
   'Zoidberg', 'Hypnotoad', 'Lebowski', 'Boognish', 'Mandelbrot', 'BanachTarski', 'Hofstadter', 'Eigenvalue',
   'Frobnicate', 'Heisenberg', 'Zalgo', 'Snorlax', 'Gunter', 'MrMeeseeks', 'Glurmo', 'Quaternion',
-];
+// Drop any handle longer than the display cap (counted by code point) so no bot ever
+// exceeds it -- auto-prunes the pool to MAX_NAME_LEN and stays correct if names are added.
+].filter((n) => [...n].length <= MAX_NAME_LEN);
 
 // Personality archetypes. Ranges [min,max] are sampled per bot. Tuned sharper
 // than a casual filler so the field is genuinely competitive.
@@ -249,7 +252,11 @@ function pickPersonalityName() {
 function pickName(taken) {
   const free = NAME_POOL.filter((n) => !taken || !taken.has(n));
   if (free.length) return free[randInt(0, free.length - 1)];
-  return `${NAME_POOL[randInt(0, NAME_POOL.length - 1)]}${randInt(2, 99)}`;
+  // Pool exhausted: base + number, clamped to MAX_NAME_LEN (by code point) so the
+  // fallback can't slip past the cap either.
+  const base = NAME_POOL[randInt(0, NAME_POOL.length - 1)];
+  const suffix = String(randInt(2, 99));
+  return [...base].slice(0, Math.max(1, MAX_NAME_LEN - suffix.length)).join('') + suffix;
 }
 
 function createBotAI() {
