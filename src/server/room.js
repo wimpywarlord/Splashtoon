@@ -55,6 +55,7 @@ const {
   TINY_SPEED_MULT,
   ERASE_MS,
   ECHO_MS,
+  CONVERT_MS,
   SELF_FREEZE_MS,
   SELF_INKJAM_MS,
   MISSILE_COUNT,
@@ -297,6 +298,8 @@ class Room {
     p.erasingUntil = 0;
     p.brushScaleUntil = 0;
     p.brushScale = 1;
+    p.paintSlotOverride = -1;
+    p.paintSlotOverrideUntil = 0;
     p.castType = null;
     p.castUntil = 0;
     p.prevX = p.x;
@@ -527,13 +530,16 @@ class Room {
     // coalesced by distance so their count doesn't scale with the sim rate.
     const brushR = this.brushRadius(p, t);
     const erasing = t < p.erasingUntil;
+    // "Recruit"/convert: a converted brush lays the CASTER's color (scores for them).
+    const paintSlot = (t < p.paintSlotOverrideUntil && p.paintSlotOverride >= 0)
+      ? p.paintSlotOverride : p.slot;
     if (erasing) this.erasePath(px, py, p.x, p.y, brushR);
-    else this.paintPath(px, py, p.x, p.y, p.slot, brushR);
+    else this.paintPath(px, py, p.x, p.y, paintSlot, brushR);
     if (p.visAnchorX === undefined) { p.visAnchorX = px; p.visAnchorY = py; }
     const vdx = p.x - p.visAnchorX;
     const vdy = p.y - p.visAnchorY;
     if (vdx * vdx + vdy * vdy >= VIS_STROKE_MIN2) {
-      this.recordPaintStroke(p.visAnchorX, p.visAnchorY, p.x, p.y, p.slot, brushR, erasing);
+      this.recordPaintStroke(p.visAnchorX, p.visAnchorY, p.x, p.y, paintSlot, brushR, erasing);
       p.visAnchorX = p.x;
       p.visAnchorY = p.y;
     }
@@ -549,7 +555,7 @@ class Room {
     // contesters, so it isn't chosen) -- spawns follow the scrum. Falls back to any
     // feet-clear spot if nobody's grouped up.
     const actives = [];
-    for (const p of this.players.values()) if (p.slot >= 0) actives.push(p);
+    for (const p of this.players.values()) if (p.slot >= 0 && !p.isEcho) actives.push(p);
     const feetR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
     const contestR2 = POWERUP_SPAWN_CONTEST_R * POWERUP_SPAWN_CONTEST_R;
     let px = 0, py = 0, lcx = 0, lcy = 0, lsx = 0, lsy = 0, hasClear = false, found = false;
@@ -650,38 +656,65 @@ class Room {
     }
   }
 
+  // "Ghost twin": a translucent clone that spawns BESIDE you and MIRRORS your input
+  // every tick (see tick()), tracing a parallel path in your color. It has no AI of
+  // its own -- so it reads clearly as "a copy of me doing what I do", not the old
+  // stray bot that wandered off and confused everyone.
   spawnEcho(owner, t) {
-    const margin = BRUSH_R * 4;
     const echo = new Player(this.manager.allocId(), null);
-    echo.isBot = true;
+    echo.isBot = true;          // server-only entity: no socket, never a human
     echo.isEcho = true;
     echo.ownerId = owner.id;
     echo.name = owner.name;
-    echo.slot = owner.slot;
-    echo.ai = createBotAI();
+    echo.slot = owner.slot;     // paints the owner's color
+    echo.ai = null;             // mirrors the owner instead of steering itself
     echo.echoExpiresAt = t + ECHO_MS;
 
-    let best = null;
-    for (let i = 0; i < 24; i++) {
-      const x = margin + Math.random() * (WORLD_W - 2 * margin);
-      const y = margin + Math.random() * (WORLD_H - 2 * margin);
-      const dOwner = Math.hypot(x - owner.x, y - owner.y);
-      if (!best || dOwner > best.dOwner) best = { x, y, dOwner };
-    }
-
-    echo.x = Math.round(best.x);
-    echo.y = Math.round(best.y);
+    // Start one brush-width to a side of the owner, flipped/clamped so the twin is
+    // fully inside the arena and visibly alongside (not stacked on) the owner.
+    const off = BRUSH_R * 3.5;
+    let ex = owner.x - off;
+    let ey = owner.y - off;
+    if (ex < BRUSH_R) ex = owner.x + off;
+    if (ey < BRUSH_R) ey = owner.y + off;
+    echo.x = Math.round(Math.max(BRUSH_R, Math.min(WORLD_W - BRUSH_R, ex)));
+    echo.y = Math.round(Math.max(BRUSH_R, Math.min(WORLD_H - BRUSH_R, ey)));
     echo.prevX = echo.x;
     echo.prevY = echo.y;
+    echo.mx = owner.mx;
+    echo.my = owner.my;
+    this.syncEchoState(echo, owner, t);
     this.players.set(echo.id, echo);
     this.echoIds.add(echo.id);
+  }
+
+  syncEchoState(echo, owner, t) {
+    echo.boostUntil = owner.boostUntil;
+    echo.slowUntil = owner.slowUntil;
+    echo.frozenUntil = owner.frozenUntil;
+    echo.noPaintUntil = owner.noPaintUntil;
+    echo.erasingUntil = owner.erasingUntil;
+    echo.brushScale = owner.brushScale;
+    echo.brushScaleUntil = owner.brushScaleUntil;
+    echo.castType = owner.castType;
+    echo.castUntil = owner.castUntil;
+    if (t < owner.paintSlotOverrideUntil && owner.paintSlotOverride >= 0) {
+      echo.paintSlotOverride = owner.paintSlotOverride;
+      echo.paintSlotOverrideUntil = owner.paintSlotOverrideUntil;
+    } else {
+      echo.paintSlotOverride = -1;
+      echo.paintSlotOverrideUntil = 0;
+    }
   }
 
   removeExpiredEchoes(t) {
     if (!this.echoIds.size) return;
     for (const id of [...this.echoIds]) {
       const p = this.players.get(id);
-      if (!p || t >= p.echoExpiresAt || p.slot < 0) {
+      const owner = p && this.players.get(p.ownerId);
+      // Expire on its own clock, or the instant its owner leaves/spectates -- a twin
+      // with no one to mirror is exactly the stray we're getting rid of.
+      if (!p || t >= p.echoExpiresAt || p.slot < 0 || !owner || owner.slot < 0) {
         this.players.delete(id);
         this.echoIds.delete(id);
       }
@@ -740,7 +773,38 @@ class Room {
         if (o.slot < 0 || o.slot === p.slot) continue;
         o.erasingUntil = t + ERASE_MS;
       }
+    } else if (type === 'convert') {
+      // "Recruit": every rival's brush paints the caster's color for a short window,
+      // so their strokes score for the caster. The caster's own brush is unchanged.
+      for (const o of this.players.values()) {
+        if (o.slot < 0 || o.slot === p.slot) continue;
+        o.paintSlotOverride = p.slot;
+        o.paintSlotOverrideUntil = t + CONVERT_MS;
+      }
+    } else if (type === 'snap') {
+      this.doHalfWipe(p);
     }
+  }
+
+  // "Snap": instantly clear a RANDOM half of the arena (left/right/top/bottom) --
+  // everyone's paint in that half, the caster's included (the gamble is the point).
+  // The grid clear updates scores + feeds the join-replay log (the 'wipe' event); the
+  // client flashes the half bright white, then it fades to reveal the erased area (see
+  // the 'snap' message). Wiped paint repaints naturally as brushes pass back over it.
+  doHalfWipe(p) {
+    const halves = ['left', 'right', 'top', 'bottom'];
+    const dir = halves[Math.floor(Math.random() * halves.length)];
+    let cx0 = 0, cy0 = 0, cx1 = GRID_W, cy1 = GRID_H;   // cell range [cx0,cx1) x [cy0,cy1)
+    if (dir === 'left') cx1 = GRID_W >> 1;
+    else if (dir === 'right') cx0 = GRID_W >> 1;
+    else if (dir === 'top') cy1 = GRID_H >> 1;
+    else cy0 = GRID_H >> 1;
+    for (let cy = cy0; cy < cy1; cy++) {
+      for (let cx = cx0; cx < cx1; cx++) this.clearCell(cx, cy);
+    }
+    const wx = cx0 * CELL, wy = cy0 * CELL, ww = (cx1 - cx0) * CELL, wh = (cy1 - cy0) * CELL;
+    this.visualPaintEvents.push({ t: 'wipe', x: wx, y: wy, w: ww, h: wh });
+    this.broadcast({ t: 'snap', slot: p.slot, dir, x: wx, y: wy, w: ww, h: wh });
   }
 
   processImpacts(t) {
@@ -868,7 +932,21 @@ class Room {
       if (t - this.lastCoarseAt >= BOT_COARSE_MS) { this.recomputeCoarse(); this.lastCoarseAt = t; }
       for (const p of this.players.values()) {
         if (p.slot < 0) continue;
-        if (p.isBot) updateBot(p, this, dt, t);
+        if (p.isEcho) {
+          // Ghost twin: copy the owner's current input so it parallels their path
+          // under identical physics (it desyncs only where a wall clips one of them).
+          const owner = this.players.get(p.ownerId);
+          if (owner && owner.slot >= 0) {
+            p.mx = owner.mx;
+            p.my = owner.my;
+            this.syncEchoState(p, owner, t);
+          } else {
+            p.mx = 0;
+            p.my = 0;
+          }
+        } else if (p.isBot) {
+          updateBot(p, this, dt, t);
+        }
         this.stepPlayer(p, dt);
       }
       this.updatePowerups(t);
@@ -907,6 +985,8 @@ class Room {
           p.castType = null;
           p.castUntil = 0;
         }
+        const paintSlot = (t < p.paintSlotOverrideUntil && p.paintSlotOverride >= 0)
+          ? p.paintSlotOverride : p.slot;
         out.push({
           id: p.id,
           slot: p.slot,
@@ -919,6 +999,8 @@ class Room {
           noPaint: t < p.noPaintUntil,
           erasing: t < p.erasingUntil,
           paintScale: this.brushScale(p, t),
+          paintSlot,                    // convert: the slot this brush currently paints AS
+          echo: !!p.isEcho,             // render hint: draw the ghost twin translucent
           castType,
           inputActive: !!(p.mx || p.my),
         });

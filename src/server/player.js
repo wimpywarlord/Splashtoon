@@ -21,6 +21,10 @@ class Player {
     this.erasingUntil = 0;
     this.brushScaleUntil = 0;
     this.brushScale = 1;
+    // "Recruit"/convert: while active, this brush PAINTS AS paintSlotOverride
+    // (the caster's slot) instead of its own -- its strokes score for the caster.
+    this.paintSlotOverride = -1;
+    this.paintSlotOverrideUntil = 0;
     this.castType = null;
     this.castUntil = 0;
     this.prevX = 0;

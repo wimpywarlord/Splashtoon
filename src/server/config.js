@@ -90,6 +90,10 @@ const TINY_BRUSH_MULT = 0.55;
 const TINY_SPEED_MULT = 1.25;
 const ERASE_MS = 5_000;
 const ECHO_MS = 7_000;
+// "Recruit": every rival's brush paints YOUR color for this long (their strokes score
+// for you). Short on purpose -- a converted bot mostly stands still to deny the donate
+// (see bot-ai), so this is a brief tactical window, not a runaway swing.
+const CONVERT_MS = 2_000;
 const SELF_FREEZE_MS = 3_000;
 const SELF_INKJAM_MS = 3_000;
 
@@ -112,6 +116,8 @@ const POWERUP_TYPES = [
   'selfInkjam',
   'badMissile',
   'tiny',
+  'convert',
+  'snap',
 ];
 // Good powers are intentionally more common than bad powers; bad powers exist to
 // make shuffled pickups risky, not to make most races feel like punishment.
@@ -123,6 +129,8 @@ const POWERUP_SPAWN_POOL = [
   'mega', 'mega',
   'echo', 'echo',
   'erase', 'erase',
+  'convert',            // strong (rivals paint YOUR color) -> kept rare: single entry
+  'snap', 'snap',       // random half-wipe: a chaotic gamble, so normal frequency
   'slow',
   'selfFreeze',
   'selfInkjam',
@@ -223,6 +231,7 @@ module.exports = {
   TINY_SPEED_MULT,
   ERASE_MS,
   ECHO_MS,
+  CONVERT_MS,
   SELF_FREEZE_MS,
   SELF_INKJAM_MS,
   MISSILE_COUNT,

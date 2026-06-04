@@ -58,9 +58,14 @@
         selfInkjam: 9,
         badMissile: 10,
         tiny: 11,
+        convert: 13,   // Recruit = army helmet (col 13 in the sheet)
+        snap: 12,      // Snap = gauntlet (col 12 in the sheet)
       },
       rows: { active: 0, disabled: 1 },
     },
     POWERUP_FADE_MS: 850,
+    // "Snap" white flash over the wiped half: opaque first, then fades to reveal the
+    // erased area (see the 'snap' handler + drawBoardContent in client.js).
+    SNAP_FLASH_MS: 650,
   };
 })(window);

@@ -31,11 +31,16 @@
 <body>
   <div id="stage">
 
-    <!-- Ranking bar: block element in flow; settings (left), ranks split around timer -->
+    <!-- Ranking bar: block element in flow; settings (left), ranks split around the
+         timer, power-up legend (right). Lives on the landing too (the tutorial sim
+         feeds it live ranks + the round clock), so it ships visible -- nothing
+         flashes or pops at boot. The .topbar-balance pads the gear side to the
+         legend's width so the timer stays truly centered. -->
     <div id="topbar">
       <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
       </button>
+      <span class="topbar-balance" aria-hidden="true"></span>
       <div id="rank-left" class="rank-group"></div>
       <div id="timer">
         <span class="eb-bg"></span>
@@ -46,7 +51,45 @@
         <span class="timer-val">2:00</span>
       </div>
       <div id="rank-right" class="rank-group"></div>
-      <span class="topbar-spacer"></span>
+      <!-- Power-up legend (both scenes): avatar-stack trigger; the cheat-sheet
+           popover is position:fixed so the bar's overflow can't clip it. Icons
+           come from the powerups spritesheet via --pu-col (matches
+           POWERUP_SHEET.cols in client-config.js). -->
+      <div id="legend">
+        <button id="legend-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="legend-menu">
+          <span class="legend-stack" aria-hidden="true">
+            <span class="pu-avatar" style="--pu-col: 0"></span>
+            <span class="pu-avatar" style="--pu-col: 1"></span>
+            <span class="pu-avatar" style="--pu-col: 3"></span>
+            <span class="pu-avatar" style="--pu-col: 4"></span>
+          </span>
+          <span class="legend-label">Legend</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- The legend's cheat-sheet popover lives OUTSIDE the bar: #topbar is a
+         z-index:3 stacking context under the canvas overlay (so brush tips can
+         lean over the bar), which would trap and hide the menu. Out here it
+         stacks above the canvas; the button (in the bar) toggles it by id. -->
+    <div id="legend-menu" class="hidden" aria-label="Power-up legend">
+      <div class="legend-title">Power-ups</div>
+      <div class="legend-group">Boons</div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 0"></span><span class="legend-name">Speed</span><span class="legend-desc">Double speed.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 1"></span><span class="legend-name">Freeze</span><span class="legend-desc">Roots every rival in place.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 2"></span><span class="legend-name">Ink Jam</span><span class="legend-desc">Rivals&#8217; paint stops flowing.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 3"></span><span class="legend-name">Missiles</span><span class="legend-desc">Rains 12 splats of your color.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 4"></span><span class="legend-name">Mega Brush</span><span class="legend-desc">Paints a far wider trail.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 5"></span><span class="legend-name">Echo</span><span class="legend-desc">A ghost twin mirrors your moves.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 6"></span><span class="legend-name">Erase</span><span class="legend-desc">Rivals erase instead of paint.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 13"></span><span class="legend-name">Recruit</span><span class="legend-desc">Rivals paint your color.</span></div>
+      <div class="legend-group legend-group-bad">Hazards</div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 7"></span><span class="legend-name">Slow</span><span class="legend-desc">You crawl at half speed.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 8"></span><span class="legend-name">Self-Freeze</span><span class="legend-desc">Freezes you instead.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 9"></span><span class="legend-name">Self Ink Jam</span><span class="legend-desc">Your own paint cuts out.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 10"></span><span class="legend-name">Backfire</span><span class="legend-desc">Rival-colored splats burst from you.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 11"></span><span class="legend-name">Tiny Brush</span><span class="legend-desc">Slim trail, slightly faster.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 12"></span><span class="legend-name">Snap</span><span class="legend-desc">Wipes a random half.</span></div>
     </div>
 
     <!-- Full-viewport canvas overlay: play area is rendered below the bar, but
@@ -61,10 +104,6 @@
     <!-- Settings dropdown (anchored under the gear; expandable over time) -->
     <div id="settings-menu" class="hidden">
       <div class="settings-title">Settings</div>
-      <div class="settings-row">
-        <span>Countdown</span>
-        <button id="countdown-toggle" class="settings-btn-sm" type="button">On</button>
-      </div>
       <label class="settings-row">
         <span>Master</span>
         <input id="vol-slider" type="range" min="0" max="100" value="70" />
@@ -91,9 +130,13 @@
       </div>
     </div>
 
+    <!-- Winner confetti: fixed full-viewport canvas, OUTSIDE the results modal so
+         the landing sim can rain it without showing the modal (matches still pair
+         it with the results card exactly as before). -->
+    <canvas id="results-confetti" aria-hidden="true"></canvas>
+
     <!-- Round-over results -->
     <div id="results" class="overlay hidden">
-      <canvas id="results-confetti" aria-hidden="true"></canvas>
       <div id="round-end-card" class="round-end-card">
         <div id="result-kicker" class="result-kicker">Round over</div>
         <div id="result-title" class="big">ROUND OVER</div>
@@ -105,37 +148,12 @@
       </div>
     </div>
 
-    <!-- Landing-only power-up legend (top right): an avatar-stack trigger opens a
-         cheat sheet of every pickup. Icons come from the powerups spritesheet via
-         --pu-col (column index, matching POWERUP_SHEET.cols in client-config.js).
-         Shown via body.in-menu like the bottom nav. -->
-    <div id="legend">
-      <button id="legend-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="legend-menu">
-        <span class="legend-stack" aria-hidden="true">
-          <span class="pu-avatar" style="--pu-col: 0"></span>
-          <span class="pu-avatar" style="--pu-col: 1"></span>
-          <span class="pu-avatar" style="--pu-col: 3"></span>
-          <span class="pu-avatar" style="--pu-col: 4"></span>
-        </span>
-        <span>Legend</span>
+    <!-- Landing-only settings gear (top left); the settings popover anchors
+         directly below it (see body.in-menu #settings-menu). -->
+    <div id="landing-settings">
+      <button id="nav-settings" class="nav-btn nav-icon-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Settings">
+        <svg class="nav-icon nav-icon-gear" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 7 4.4l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5h.1a1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.1a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"></path></svg>
       </button>
-      <div id="legend-menu" class="hidden" aria-label="Power-up legend">
-        <div class="legend-title">Power-ups</div>
-        <div class="legend-group">Boons</div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 0"></span><span class="legend-name">Speed</span><span class="legend-desc">Double speed.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 1"></span><span class="legend-name">Freeze</span><span class="legend-desc">Roots every rival in place.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 2"></span><span class="legend-name">Ink Jam</span><span class="legend-desc">Rivals&#8217; paint stops flowing.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 3"></span><span class="legend-name">Missiles</span><span class="legend-desc">Rains 12 splats of your color.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 4"></span><span class="legend-name">Mega Brush</span><span class="legend-desc">Paints a far wider trail.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 5"></span><span class="legend-name">Echo</span><span class="legend-desc">A clone paints for you elsewhere.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 6"></span><span class="legend-name">Erase</span><span class="legend-desc">Rivals erase instead of paint.</span></div>
-        <div class="legend-group legend-group-bad">Hazards</div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 7"></span><span class="legend-name">Slow</span><span class="legend-desc">You crawl at half speed.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 8"></span><span class="legend-name">Self-Freeze</span><span class="legend-desc">Freezes you instead.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 9"></span><span class="legend-name">Self Ink Jam</span><span class="legend-desc">Your own paint cuts out.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 10"></span><span class="legend-name">Backfire</span><span class="legend-desc">Rival-colored splats burst from you.</span></div>
-        <div class="legend-row"><span class="pu-avatar" style="--pu-col: 11"></span><span class="legend-name">Tiny Brush</span><span class="legend-desc">Slim trail, slightly faster.</span></div>
-      </div>
     </div>
 
     <!-- Landing-only bottom bar: brand + stats (left), name/Play + menu (right).
@@ -150,6 +168,10 @@
              wherever it should live (renderStats() targets #stats; .stats styles are portable). -->
       </div>
       <div class="nav-right">
+        <!-- Landing tutorial toast, perched right above the START MULTIPLAYER
+             headline (absolute against .nav-right): starts as the WASD hint,
+             then names each power-up the sim brush collects (showSimToast). -->
+        <div id="sim-toast" class="hidden" aria-live="polite"></div>
         <div id="landing-title" class="landing-title">Start Multiplayer</div>
         <div class="nav-control-row">
           <form id="start-form" class="start-form" autocomplete="off" aria-labelledby="landing-title">
@@ -164,9 +186,6 @@
               <svg class="nav-icon nav-icon-x" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M14.6 10.4 22 2h-1.8l-6.4 7.3L8.6 2H2.7l7.8 11.1L2.7 22h1.8l6.8-7.7 5.5 7.7h5.9l-8.1-11.6zm-2.4 2.7-.8-1.1L5.1 3.3h2.6l5.1 7.1.8 1.1 6.6 9.2h-2.6l-5.4-7.6z"></path></svg>
               <span>@type_kshitij</span>
             </a>
-            <button id="nav-settings" class="nav-btn nav-icon-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Settings">
-              <svg class="nav-icon nav-icon-gear" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 7 4.4l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5h.1a1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.1a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"></path></svg>
-            </button>
           </div>
         </div>
       </div>

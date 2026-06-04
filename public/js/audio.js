@@ -16,6 +16,8 @@
   let ctx = null;
   let master = null;
   let musicGain = null;
+  let musicPump = null;   // sidechain "pump" bus -- ducks on every kick
+  let musicComp = null;   // glue/limiter across the (now dense) music bed
   let sfxGain = null;
   let brushGain = null;   // own bus so the movement loop has its own setting
   let noiseBuf = null;
@@ -29,7 +31,7 @@
 
   // Per-category mix levels. The user's category volume (0..1) multiplies these,
   // so a category at 1.0 sounds exactly as it did before category controls.
-  const MUSIC_MIX = 0.32;
+  const MUSIC_MIX = 0.30;   // dense driving bed; a touch under the old calm pad
   const SFX_MIX = 0.9;
   const BRUSH_MIX = 0.9;  // matches SFX_MIX so the default whoosh level is unchanged
 
@@ -47,10 +49,6 @@
   let musicTimer = null;
   let nextNoteTime = 0;
   let step = 0;
-
-  // Pre-round countdown SFX: a synthesized 3-2-1-GO, scheduled on the audio clock so
-  // it lines up exactly with the on-screen numbers. Toggleable independently.
-  let countdownEnabled = true;
 
   function supported() {
     return !!(global.AudioContext || global.webkitAudioContext);
@@ -72,9 +70,24 @@
     master.gain.value = muted ? 0 : volume;
     master.connect(ctx.destination);
 
+    // Music bus: musicPump (sidechain) -> musicGain (category vol + duck) ->
+    // musicComp (glue/limiter) -> master. The kick taps musicGain directly so it
+    // punches through the pump; everything else rides musicPump.
+    musicComp = ctx.createDynamicsCompressor();
+    musicComp.threshold.value = -18;
+    musicComp.knee.value = 10;
+    musicComp.ratio.value = 4;
+    musicComp.attack.value = 0.003;
+    musicComp.release.value = 0.18;
+    musicComp.connect(master);
+
     musicGain = ctx.createGain();
     musicGain.gain.value = MUSIC_MIX * musicVol;
-    musicGain.connect(master);
+    musicGain.connect(musicComp);
+
+    musicPump = ctx.createGain();
+    musicPump.gain.value = 1;
+    musicPump.connect(musicGain);
 
     sfxGain = ctx.createGain();
     sfxGain.gain.value = SFX_MIX * sfxVol;
@@ -208,6 +221,15 @@
       tone({ type: 'triangle', f0: 1300, f1: 940, dur: 0.08, gain: 0.16 });
       tone({ type: 'triangle', f0: 980, f1: 720, dur: 0.08, gain: 0.12, delay: 0.07 });
       tone({ type: 'triangle', f0: 720, f1: 520, dur: 0.1, gain: 0.09, delay: 0.14 });
+    } else if (type === 'convert') {
+      // "Recruit": a bright rallying call -- rivals fall in under your color.
+      tone({ type: 'sawtooth', f0: 300, f1: 600, dur: 0.18, gain: 0.20 });
+      tone({ type: 'square', f0: 450, f1: 900, dur: 0.16, gain: 0.13, delay: 0.06 });
+      tone({ type: 'triangle', f0: 900, f1: 1380, dur: 0.18, gain: 0.12, delay: 0.12 });
+    } else if (type === 'snap') {
+      // The finger-snap transient; the board boom rides on snap() (the wipe event).
+      noise({ filter: 'highpass', freq: 3600, dur: 0.04, gain: 0.30, at: t0 });
+      tone({ type: 'square', f0: 1200, f1: 320, dur: 0.05, gain: 0.12 });
     } else {
       tone({ type: 'triangle', f0: 600, f1: 900, dur: 0.14, gain: 0.28 });
     }
@@ -218,6 +240,18 @@
     tone({ type: 'sine', f0: 180, f1: 42, dur: 0.28, gain: 0.5 });
     noise({ filter: 'lowpass', freq: 900, q: 1, dur: 0.2, gain: 0.4 });
     duck(0.5, 0.35);
+  }
+
+  // "Snap" half-wipe: a finger-snap crack into a white-noise sweep and a deep boom --
+  // the sound of half the board flashing white and vanishing. Music ducks under it.
+  function snap() {
+    if (!ctx || !claimVoice(0.9)) return;
+    const t0 = now();
+    noise({ filter: 'highpass', freq: 4200, dur: 0.05, gain: 0.30, at: t0 });          // snap crack
+    noise({ filter: 'bandpass', freq: 1400, q: 0.5, dur: 0.18, gain: 0.30, at: t0 });   // white sweep
+    tone({ type: 'sine', f0: 150, f1: 40, dur: 0.36, gain: 0.42 });                     // boom
+    noise({ filter: 'lowpass', freq: 200, dur: 0.5, gain: 0.24, at: t0 + 0.03 });       // rumble
+    duck(0.45, 0.4);
   }
 
   // secondsLeft: 10..1 rising ticks; a brighter beep at 0.
@@ -268,9 +302,10 @@
   // ---- pre-round countdown (synthesized 3-2-1-GO) ---------------------------
   // Scheduled on the audio clock from round start: a rising beep per second for
   // 3 / 2 / 1, then a brighter fanfare at GO -- so it lines up with the on-screen
-  // numbers (server countdown = 3s) with zero drift, no asset to load.
+  // numbers (server countdown = 3s) with zero drift, no asset to load. Always
+  // on (the old toggle is gone); Master at 0 is the mute.
   function countdown() {
-    if (!ctx || muted || !countdownEnabled) return;
+    if (!ctx || muted) return;
     const t0 = now();
     const beep = (at, f) => {
       tone({ type: 'square',   f0: f,     dur: 0.15, gain: 0.26, at, attack: 0.004 });
@@ -311,59 +346,198 @@
   }
 
   // ---- music bed ------------------------------------------------------------
-  // Calm 4-chord loop: sustained pad + sparse arpeggio + soft hat. Pentatonic
-  // arp tones keep it consonant regardless of step.
+  // Tron-style driving electro: four-on-the-floor kick, a resonant 16th-note saw
+  // bassline (the "Derezzed" acid engine), a sidechain pump so the whole bed
+  // breathes under the kick, crisp hats + backbeat clap, and supersaw lead stabs
+  // that swell in over an 8-bar build. Same A-minor roots (i-VI-III-VII) as the
+  // SFX so stings stay in key. The kick taps musicGain directly; everything else
+  // rides musicPump.
   const PROG = [
-    { root: 220.00, triad: [220.00, 261.63, 329.63] }, // Am
-    { root: 174.61, triad: [174.61, 220.00, 261.63] }, // F
-    { root: 261.63, triad: [261.63, 329.63, 392.00] }, // C
-    { root: 196.00, triad: [196.00, 246.94, 293.66] }, // G
+    { root: 110.00, notes: [110.00, 130.81, 164.81, 220.00, 261.63, 329.63] }, // Am
+    { root: 87.31,  notes: [87.31,  110.00, 130.81, 174.61, 220.00, 261.63] }, // F
+    { root: 130.81, notes: [130.81, 164.81, 196.00, 261.63, 329.63, 392.00] }, // C
+    { root: 98.00,  notes: [98.00,  123.47, 146.83, 196.00, 246.94, 293.66] }, // G
   ];
-  const STEPS_PER_BAR = 8;
-  const STEP_DUR = 0.19;
-  const ARP_PATTERN = [1, 0, 1, 1, 0, 1, 0, 1];
+  const STEPS_PER_BAR = 16;     // 16th-note grid
+  const STEP_DUR = 0.1125;      // ~133 BPM
+  const BEAT = STEP_DUR * 4;
+  const SUPER_BARS = 8;         // 8-bar build (lead + filter swell, then reset)
+  // notes[] index per 16th: mostly root (0) with octave pops (3), melodic turn on beat 4.
+  const BASS_IDX = [0, 0, 3, 0, 0, 0, 3, 0, 0, 3, 0, 3, 1, 3, 2, 3];
+  const LEAD_PAT = [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0];
+
+  // Punchy kick: pitched sine drop + a noise click. Straight to musicGain so it
+  // punches through the pump that ducks everything else.
+  function mKick(t) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(46, t + 0.10);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.62, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.20);
+    o.connect(g); g.connect(musicGain);
+    o.start(t); o.stop(t + 0.22);
+    const c = ctx.createBufferSource();
+    c.buffer = noiseBuf;
+    const cf = ctx.createBiquadFilter();
+    cf.type = 'highpass'; cf.frequency.value = 1600;
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0.35, t);
+    cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.02);
+    c.connect(cf); cf.connect(cg); cg.connect(musicGain);
+    c.start(t, Math.random() * 0.3, 0.03);
+  }
+
+  // Sub floor, one per beat, an octave under the bass root. Pumps under the kick.
+  function mSub(t, f) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = f / 2;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + BEAT * 0.9);
+    o.connect(g); g.connect(musicPump);
+    o.start(t); o.stop(t + BEAT);
+  }
+
+  // The engine: two detuned saws through a resonant lowpass with a quick filter
+  // envelope -- the acid/Derezzed pluck. cut rises with the 8-bar build.
+  function mBass(t, f, accent, cut) {
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass'; filt.Q.value = 7;
+    filt.frequency.setValueAtTime(Math.min(cut * 2.4, 6500), t);
+    filt.frequency.exponentialRampToValueAtTime(Math.max(cut, 120), t + 0.09);
+    const g = ctx.createGain();
+    const peak = accent ? 0.20 : 0.13;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + STEP_DUR * 0.95);
+    filt.connect(g); g.connect(musicPump);
+    [0, 9].forEach((det) => {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det;
+      o.connect(filt); o.start(t); o.stop(t + STEP_DUR);
+    });
+  }
+
+  // Hat: short closed / longer open, bright noise. Pumps so it shuffles under the kick.
+  function mHat(t, open, gain) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 8000;
+    const g = ctx.createGain();
+    const dur = open ? 0.10 : 0.035;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(hp); hp.connect(g); g.connect(musicPump);
+    src.start(t, Math.random() * 0.4, dur + 0.02);
+  }
+
+  // Clap on the backbeat: three quick bandpassed noise bursts with a tail.
+  function mClap(t) {
+    for (let i = 0; i < 3; i++) {
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.7;
+      const g = ctx.createGain();
+      const tt = t + i * 0.008;
+      g.gain.setValueAtTime(0.0001, tt);
+      g.gain.exponentialRampToValueAtTime(0.20, tt + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + (i === 2 ? 0.12 : 0.03));
+      src.connect(bp); bp.connect(g); g.connect(musicPump);
+      src.start(tt, Math.random() * 0.3, 0.14);
+    }
+  }
+
+  // Supersaw lead stab: detuned saws with a snappy filter "wah". Enters in the
+  // back half of the build for lift.
+  function mLead(t, freqs) {
+    const lf = ctx.createBiquadFilter();
+    lf.type = 'lowpass'; lf.Q.value = 0.8;
+    lf.frequency.setValueAtTime(1200, t);
+    lf.frequency.exponentialRampToValueAtTime(3600, t + 0.05);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.085, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    lf.connect(g); g.connect(musicPump);
+    freqs.forEach((f) => [-8, 8].forEach((det) => {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det;
+      o.connect(lf); o.start(t); o.stop(t + 0.20);
+    }));
+  }
+
+  // Dark detuned-saw pad holding the chord across the bar. Low and breathing.
+  function mPad(t, freqs, cut) {
+    const lf = ctx.createBiquadFilter();
+    lf.type = 'lowpass'; lf.frequency.value = cut; lf.Q.value = 0.5;
+    const g = ctx.createGain();
+    const dur = BEAT * 4;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.045, t + 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.98);
+    lf.connect(g); g.connect(musicPump);
+    freqs.forEach((f) => [-6, 6].forEach((det) => {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det;
+      o.connect(lf); o.start(t); o.stop(t + dur);
+    }));
+  }
+
+  // Rising filtered-noise sweep into the top of the 8-bar loop.
+  function mRiser(t, dur) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(500, t);
+    bp.frequency.exponentialRampToValueAtTime(7000, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.09, t + dur * 0.9);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp); bp.connect(g); g.connect(musicPump);
+    src.start(t); src.stop(t + dur + 0.05);
+  }
 
   function scheduleStep(bar, s, t) {
     const chord = PROG[bar % PROG.length];
-    // Pad on the downbeat: soft detuned triad with a slow swell.
-    if (s === 0) {
-      chord.triad.forEach((f, i) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = i === 0 ? 'sine' : 'triangle';
-        o.frequency.value = f / 2;
-        g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(0.12, t + 0.25);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + STEP_DUR * STEPS_PER_BAR * 0.95);
-        o.connect(g); g.connect(musicGain);
-        o.start(t); o.stop(t + STEP_DUR * STEPS_PER_BAR);
-      });
+    const superBar = bar % SUPER_BARS;
+    const build = (superBar * STEPS_PER_BAR + s) / (SUPER_BARS * STEPS_PER_BAR); // 0..1
+    const onBeat = (s % 4 === 0);
+
+    // Sidechain pump: duck the bed on every beat, swell back before the next.
+    if (onBeat && musicPump) {
+      musicPump.gain.cancelScheduledValues(t);
+      musicPump.gain.setValueAtTime(0.30, t);
+      musicPump.gain.linearRampToValueAtTime(1.0, t + BEAT * 0.85);
     }
-    // Sparse arpeggio.
-    if (ARP_PATTERN[s]) {
-      const f = chord.triad[(s + bar) % chord.triad.length] * (s >= 5 ? 2 : 1);
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'triangle';
-      o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.10, t + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-      o.connect(g); g.connect(musicGain);
-      o.start(t); o.stop(t + 0.25);
+
+    if (onBeat) { mKick(t); mSub(t, chord.root); }
+    if (s === 0) mPad(t, [chord.notes[2], chord.notes[3], chord.notes[4]], 900 + build * 1800);
+    if (s === 4 || s === 12) mClap(t);
+
+    // Hats: open on the offbeat eighths, closed fills elsewhere -> 16th drive.
+    if (s === 2 || s === 6 || s === 10 || s === 14) mHat(t, true, 0.06);
+    else if (s % 2 === 0) mHat(t, false, 0.045);
+    if (s % 2 === 1) mHat(t, false, 0.022);
+
+    // Bassline engine on every 16th.
+    mBass(t, chord.notes[BASS_IDX[s]], onBeat, 320 + build * 700);
+
+    // Lead stabs enter in the back half of the build.
+    if (superBar >= 4 && LEAD_PAT[s]) {
+      mLead(t, [chord.notes[3] * 2, chord.notes[4] * 2, chord.notes[5] * 2]);
     }
-    // Soft hat on offbeats.
-    if (s % 2 === 1) {
-      const src = ctx.createBufferSource();
-      src.buffer = noiseBuf;
-      const filt = ctx.createBiquadFilter();
-      filt.type = 'highpass'; filt.frequency.value = 7000;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.03, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-      src.connect(filt); filt.connect(g); g.connect(musicGain);
-      src.start(t, Math.random() * 0.3, 0.06);
-    }
+
+    // Riser into the next loop top.
+    if (superBar === SUPER_BARS - 1 && s === 0) mRiser(t, BEAT * 4);
   }
 
   function musicScheduler() {
@@ -407,21 +581,19 @@
   function setBrushVolume(v) { brushVol = clamp01(v); applyBrushVol(); }
   function getBrushVolume() { return brushVol; }
   function setMusicEnabled(on) { musicOn = !!on; }
-  function setCountdownEnabled(on) { countdownEnabled = !!on; }
-  function isCountdownEnabled() { return countdownEnabled; }
 
   // Initialize prefs from store if present.
   try {
     if (global.SplashtoonStore) {
       const a = global.SplashtoonStore.getAudio();
-      // Stored `muted` is intentionally ignored: the Sound On/Off toggle is gone
-      // (Master at 0 is the mute), so a legacy muted=true must not strand the
-      // user in silence with no control to undo it.
+      // Stored `muted` and the legacy `countdown` toggle are intentionally
+      // ignored: both controls are gone (Master at 0 is the mute; the 3-2-1
+      // always plays), so a stored "off" must not strand the user with no
+      // control to undo it.
       volume = typeof a.volume === 'number' ? a.volume : volume;
       musicVol = typeof a.musicVol === 'number' ? a.musicVol : musicVol;
       sfxVol = typeof a.sfxVol === 'number' ? a.sfxVol : sfxVol;
       brushVol = typeof a.brushVol === 'number' ? a.brushVol : brushVol;
-      countdownEnabled = a.countdown !== false;   // default on
     }
   } catch (_) { /* ignore */ }
 
@@ -431,8 +603,8 @@
   });
 
   global.SplashtoonAudio = {
-    unlock, pickup, impact, tick, roundEnd, spawn, powerupSpawn, movement, duck,
-    countdown, setCountdownEnabled, isCountdownEnabled,
+    unlock, pickup, impact, snap, tick, roundEnd, spawn, powerupSpawn, movement, duck,
+    countdown,
     setMuted, isMuted, setVolume, getVolume, setMusicEnabled,
     setMusicVolume, getMusicVolume, setSfxVolume, getSfxVolume,
     setBrushVolume, getBrushVolume,

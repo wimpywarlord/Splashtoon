@@ -683,8 +683,7 @@ html, body {
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  background: linear-gradient(180deg, #15171f, #0e1016);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #14171f;      /* = ARENA_BG in client.js: the bar blends seamlessly into the board */
   font-variant-numeric: tabular-nums;
   overflow: hidden;         /* clip ranking chips if they exceed the width */
 }
@@ -699,7 +698,10 @@ html, body {
 }
 #rank-left { justify-content: flex-end; }     /* hug the timer from the left */
 #rank-right { justify-content: flex-start; }   /* hug the timer from the right */
-.topbar-spacer { width: 34px; flex: none; }    /* balances the settings button -> timer truly centered */
+/* Pads the gear side so the timer stays truly centered between the two rank
+   groups: legend(133) - gear(34) - the extra flex gap(8) ≈ 91. Tune if the
+   legend button changes size. */
+.topbar-balance { width: 91px; flex: none; }
 
 .lb-item {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
@@ -845,9 +847,9 @@ html, body {
 .link-btn:hover { color: var(--st-fg); }
 
 /* ---- Landing -------------------------------------------------------------- */
-/* No game runs on the landing now -- the canvas is hidden and all menu UI lives in a
-   single bottom bar over the page background (ready for landing content to be added). */
-body.in-menu #game { display: none; }
+/* The landing runs the local single-brush tutorial sim full-bleed on the canvas
+   behind the menu UI (see "Landing tutorial sim" in client.js): WASD steers,
+   power-ups spawn with the full ceremony and teach themselves via #sim-toast. */
 
 /* Landing-only bottom bar (toggled by body.in-menu from setNavVisible): brand on
    the left, poster-scale start prompt + controls on the right. */
@@ -952,51 +954,44 @@ body.in-menu #bottom-nav { display: flex; }
 .nav-icon-x { transform: translateX(-0.5px); }
 .nav-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Settings popover re-anchors directly above the gear on the landing. The gear is
-   the rightmost action, so matching the bar's right padding (20px) lines the
-   popover's right edge up with it; the bottom offset clears the control row. */
-body.in-menu #settings-menu {
-  top: auto;
-  bottom: calc(64px + 34px + env(safe-area-inset-bottom));
-  right: 28px;
-  left: auto;
-  z-index: 8;
-}
-/* Power-up legend (landing only, top right): an avatar-stack button -- a few
-   overlapping power-up spirits in ringed circles, shadcn style -- that opens a
-   cheat sheet popover naming every pickup. Icons are cells of the powerups
-   spritesheet picked by --pu-col (12 cols x 2 rows; row 0 = active art). */
+/* Landing floating gear: RETIRED while the top bar lives on the landing (its
+   gear + default-anchored popover serve both scenes). Kept in the markup for
+   an easy revival if the bar ever leaves the landing again. */
+#landing-settings { display: none; }
+/* Power-up legend: an avatar-stack button at the top bar's right end (both
+   scenes -- the landing sim and matches) that opens a cheat-sheet popover
+   naming every pickup. Icons are cells of the powerups spritesheet picked by
+   --pu-col (14 cols x 2 rows; row 0 = active art). */
 #legend {
-  position: absolute;
-  top: 20px;
-  right: 28px;
-  z-index: 7;
-  display: none;
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
 }
-body.in-menu #legend { display: block; }
 #legend-btn {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 11px;
-  height: 54px;
-  padding: 0 20px 0 12px;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px 0 7px;
   background: var(--st-secondary);
   border: 1px solid var(--st-border);
   color: var(--st-fg);
   font: inherit;
-  font-size: 19px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1;
-  border-radius: var(--st-radius-ctl);
+  border-radius: 8px;
   cursor: pointer;
   transition: background 0.14s ease, border-color 0.14s ease, transform 0.06s ease;
 }
 #legend-btn:hover { background: var(--st-secondary-hover); border-color: var(--st-border-strong); }
 #legend-btn:active { transform: scale(0.97); }
 #legend-btn[aria-expanded="true"] { background: var(--st-secondary-hover); border-color: var(--st-border-strong); }
+#legend-btn .pu-avatar { --pu-size: 20px; box-shadow: 0 0 0 1px var(--st-card-solid); }
 .legend-stack { display: inline-flex; }
-.legend-stack .pu-avatar:not(:first-child) { margin-left: -12px; }
+.legend-stack .pu-avatar:not(:first-child) { margin-left: -7px; }
 .pu-avatar {
   --pu-size: 34px;
   width: var(--pu-size);
@@ -1004,18 +999,21 @@ body.in-menu #legend { display: block; }
   flex: none;
   border-radius: 50%;
   background-color: var(--st-card-solid);
-  background-image: url("/assets/powerups.png?v=powerups-12x2-r5");
+  background-image: url("/assets/powerups.png?v=powerups-14x2-r1");
   background-repeat: no-repeat;
-  /* 12x2 sheet scaled so one cell fills the circle; x lands on cell N via the
-     percentage-position rule (N/11 spreads 12 cells across 0..100%). */
-  background-size: 1200% 200%;
-  background-position: calc(var(--pu-col, 0) * 100% / 11) 0;
+  /* 14x2 sheet scaled so one cell fills the circle; x lands on cell N via the
+     percentage-position rule (N/13 spreads 14 cells across 0..100%). */
+  background-size: 1400% 200%;
+  background-position: calc(var(--pu-col, 0) * 100% / 13) 0;
   box-shadow: 0 0 0 2px var(--st-card-solid);
 }
 #legend-menu {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
+  /* FIXED so the bar's overflow:hidden can't clip it; anchored just below the
+     bar at its right edge. */
+  position: fixed;
+  top: 46px;
+  right: 8px;
+  z-index: 8;
   width: 348px;
   max-height: min(68vh, 620px);
   overflow-y: auto;
@@ -1043,6 +1041,50 @@ body.in-menu #legend { display: block; }
 .legend-row .pu-avatar { --pu-size: 28px; box-shadow: 0 0 0 1px var(--st-border); }
 .legend-name { flex: none; font-weight: 700; }
 .legend-desc { color: var(--st-muted-fg); }
+/* Landing tutorial line, perched directly above the START MULTIPLAYER
+   headline (absolute against .nav-right so it tracks the title across
+   breakpoints and hides with the nav in a match). Plain paragraph text -- no
+   card -- with the power-up icon inline: "[icon] Name — effect". Class is set
+   by client.js: 'hint' (no icon), 'boon' (green name) or 'bad' (red name).
+   pointer-events off so it never steals clicks from the sim underneath. */
+#sim-toast {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: block;
+  text-align: right;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--st-fg);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 14px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+#sim-toast.hidden { display: none; }
+#sim-toast.pop { animation: sim-toast-pop 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.18); }
+@keyframes sim-toast-pop {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+#sim-toast .pu-avatar {
+  --pu-size: 24px;
+  display: inline-block;
+  vertical-align: -6px;
+  margin-right: 8px;
+  box-shadow: 0 0 0 1px var(--st-border);
+}
+.sim-toast-text { display: inline; }
+.sim-toast-name { font-weight: 700; }
+.sim-toast-name::after { content: " — "; font-weight: 400; color: var(--st-muted-fg); }
+#sim-toast.boon .sim-toast-name { color: #7ddc8e; }
+#sim-toast.bad .sim-toast-name { color: #ff8d8d; }
+.sim-toast-desc { color: var(--st-fg); }
+#sim-toast.hint .sim-toast-desc { color: var(--st-muted-fg); }
+/* Context note (e.g. "A rival grabbed this one.") sits on its own line above. */
+.sim-toast-note { display: block; font-size: 12px; color: var(--st-fg); }
+/* Round-result variant: the leader crown rides inline before "You win!". */
+.sim-result-crown { height: 22px; display: inline-block; vertical-align: -5px; margin-right: 8px; }
 /* Brand lockup: the full "Battle Painter" wordmark SVG carries the brand on its
    own (script lettering + brush + splashes), so no companion text element. */
 .brand { display: inline-flex; align-items: center; }
@@ -1116,10 +1158,6 @@ body.in-menu #legend { display: block; }
     width: 22px;
     height: 22px;
   }
-  body.in-menu #settings-menu {
-    bottom: calc(56px + 30px + env(safe-area-inset-bottom));
-    right: 22px;
-  }
 }
 
 @media (max-width: 760px) {
@@ -1141,11 +1179,11 @@ body.in-menu #legend { display: block; }
   .brand-mark {
     height: 120px;
   }
-  #legend { top: 12px; right: 12px; }
-  #legend-btn { height: 44px; font-size: 16px; gap: 9px; padding: 0 15px 0 9px; }
-  #legend-btn .pu-avatar { --pu-size: 28px; }
-  .legend-stack .pu-avatar:not(:first-child) { margin-left: -10px; }
-  #legend-menu { width: min(348px, calc(100vw - 24px)); }
+  /* In-bar legend goes icon-only on small screens; the balance shrinks with it. */
+  #legend-btn .legend-label { display: none; }
+  #legend-btn { padding: 0 7px; gap: 0; }
+  #legend-menu { width: min(348px, calc(100vw - 16px)); right: 6px; }
+  .topbar-balance { width: 31px; }
   .nav-right {
     flex-basis: 100%;
     align-items: stretch;
@@ -1185,7 +1223,7 @@ body.in-menu #legend { display: block; }
   }
   .nav-actions {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--landing-control-h);
+    grid-template-columns: minmax(0, 1fr);
     width: 100%;
     max-width: 100%;
   }
@@ -1200,10 +1238,9 @@ body.in-menu #legend { display: block; }
     width: 20px;
     height: 20px;
   }
-  body.in-menu #settings-menu {
-    bottom: calc(50px + 88px + env(safe-area-inset-bottom));
-    right: 14px;
-  }
+  /* Tutorial line tightens up on small screens (still above the headline). */
+  #sim-toast { font-size: 13px; }
+  #sim-toast .pu-avatar { --pu-size: 20px; vertical-align: -5px; margin-right: 6px; }
 }
 
 @media (max-width: 430px) {
