@@ -611,9 +611,9 @@ window.addEventListener('keydown', (e) => {
   if (d === undefined) return;
   e.preventDefault();
   if (e.repeat) return;
-  // First steer on the landing is a gesture: unlock SFX for the sim's pickups
-  // and lightning, but hold the music bed back until Play.
-  if (inMenu && GameAudio) { GameAudio.setMusicEnabled(false); GameAudio.unlock(); }
+  // First steer on the landing is a gesture: unlock audio so the tutorial sim
+  // gets the full mix (music bed, pickups, lightning) just like a real match.
+  if (inMenu && GameAudio) GameAudio.unlock();
   held.add(d);
   pushInput();
 });
@@ -1829,8 +1829,9 @@ function initMenu() {
   setCountdown('');                          // clear any leftover countdown overlay
   lastCountdownPhase = ''; goUntil = 0;
   // No name-field autofocus: on the landing, WASD/arrows belong to the tutorial
-  // brush (click the field to type). The music bed stays quiet until Play.
-  if (GameAudio) GameAudio.setMusicEnabled(false);
+  // brush (click the field to type). Music plays here too -- the landing is a
+  // real round, so it gets the real mix (it starts on the first WASD gesture).
+  if (GameAudio) GameAudio.setMusicEnabled(true);
   simStart();
 }
 
@@ -1842,7 +1843,7 @@ function startPlay() {
   if (Store) Store.setName(myName);
   simStop();            // hand the shared world state back to the match pipeline
   inMenu = false;
-  if (GameAudio) { GameAudio.setMusicEnabled(true); GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture
+  if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture (music already on)
   setBarVisible(true);
   setNavVisible(false);
   connect();            // open the connection only now
