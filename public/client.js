@@ -86,6 +86,8 @@ const els = {
   settingsBtn: document.getElementById('settings-btn'),
   navSettings: document.getElementById('nav-settings'),
   settingsMenu: document.getElementById('settings-menu'),
+  legendBtn: document.getElementById('legend-btn'),
+  legendMenu: document.getElementById('legend-menu'),
   countdown: document.getElementById('countdown'),
   countdownToggle: document.getElementById('countdown-toggle'),
   volSlider: document.getElementById('vol-slider'),
@@ -143,12 +145,12 @@ const me = { x: 0, y: 0, vx: 0, vy: 0, has: false, face: 1, dirAngle: 0, speed: 
 let powerups = [];
 let impacts = [];          // meteor impact rings being animated: [{x,y,r,slot,start}]
 let pickupFades = [];      // fading pickup icons: [{x,y,type,start}]
-// Per-powerup transient render FX keyed by server id (spawn pop, lightning strike,
-// icon-switch flip). announcedPu gates the one-shot spawn sound to genuinely new
-// powerups (seeded on join/round so existing ones don't all chime at once).
+// Per-powerup transient render FX keyed by server id (gathering shadow, lightning
+// strike, spawn pop, icon-switch flip). The crack sound fires once at the strike (see
+// drawPowerup), aligned with the bolt rather than the earlier shadow.
 const puFx = new Map();
-let announcedPu = new Set();
-const BOLT_MS = 360;       // lightning-strike duration on spawn
+const BOLT_MS = 360;          // lightning-strike duration, measured from the strike
+const PU_TELEGRAPH_MS = 1100; // cloud disk gathers this long before the strike (match server)
 let nowMs = 0;
 
 // Paint layer at grid resolution (1px per cell), scaled up on draw.
@@ -228,7 +230,6 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
-      announcedPu = new Set(powerups.map((p) => p.id));   // seed: don't chime on join
       impacts = [];
       pickupFades = [];
       applySnapshot(msg.cells, msg.paintEvents || []);
@@ -250,7 +251,6 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
-      announcePowerupSpawns();
       // Visual paint is drawn locally as smooth strokes (see paintTrails);
       // server deltas are ignored for rendering. Scores stay authoritative.
       applyPlayers(msg.players, false);
@@ -267,7 +267,6 @@ function handle(msg) {
       timeLeftMs = msg.timeLeftMs;
       scores = msg.scores;
       powerups = msg.powerups || [];
-      announcedPu = new Set(powerups.map((p) => p.id));   // seed: don't chime on resync
       applySnapshot(msg.cells, msg.paintEvents || []);
       applyPlayers(msg.players, true);   // snap render+target to the authoritative now
       resetTrailAnchors();               // re-seed anchors so no catch-up smear is drawn
@@ -888,25 +887,22 @@ function drawPickupFade(fx) {
 // sends the current type, so a change here means the icon just cycled (the twist).
 function powerupFx(pu) {
   let fx = puFx.get(pu.id);
-  if (!fx) { fx = { bornMs: nowMs, switchMs: -1e9, type: pu.type, bolt: makeBolt(pu.x, pu.y) }; puFx.set(pu.id, fx); }
-  else if (fx.type !== pu.type) { fx.type = pu.type; fx.switchMs = nowMs; }
+  if (!fx) {
+    // First seen mid-shadow -> play the gather, then strike. First seen already armed
+    // (join/resync) -> backdate past the strike so it appears settled, no replay.
+    const settled = pu.armed === true;
+    fx = {
+      bornMs: settled ? nowMs - PU_TELEGRAPH_MS - BOLT_MS : nowMs,
+      switchMs: -1e9, type: pu.type, bolt: makeBolt(pu.x, pu.y), struck: settled,
+    };
+    puFx.set(pu.id, fx);
+  } else if (fx.type !== pu.type) { fx.type = pu.type; fx.switchMs = nowMs; }
   return fx;
 }
 function prunePowerupFx() {
   if (!puFx.size) return;
   const live = new Set(powerups.map((p) => p.id));
   for (const id of puFx.keys()) if (!live.has(id)) puFx.delete(id);
-}
-// Chime once when genuinely new powerups appear (ids not seen since the last
-// join/round seed). Pruned so the set can't grow unbounded across a long match.
-function announcePowerupSpawns() {
-  let appeared = false;
-  for (const pu of powerups) if (!announcedPu.has(pu.id)) { announcedPu.add(pu.id); appeared = true; }
-  if (appeared && phase === 'active' && GameAudio && GameAudio.powerupSpawn) GameAudio.powerupSpawn();
-  if (announcedPu.size > powerups.length) {
-    const live = new Set(powerups.map((p) => p.id));
-    for (const id of announcedPu) if (!live.has(id)) announcedPu.delete(id);
-  }
 }
 
 function easeOutBack(t) {
@@ -1004,6 +1000,41 @@ function lightningFlash(x, y, r, alpha) {
   ctx.fill();
 }
 
+// Gathering cloud before the strike (p: 0 -> 1 across the telegraph). A soft white MIST
+// oval -- a flat ground disk like the countdown disk, not a flat circle -- swells with
+// drifting puffs and charges brighter as the strike nears. Type-agnostic (no icon) so
+// the warning never leaks the good/bad identity.
+function drawPowerupShadow(x, y, p, id) {
+  const e = p * p * (3 - 2 * p);                   // smoothstep swell
+  const rx = 16 + 30 * e;                          // oval grows out
+  const ry = rx * 0.52;                            // flattened -> a disk lying on the ground
+  ctx.save();
+  // Drifting puffs around the rim give a soft, cloudy edge.
+  const puffs = 6;
+  for (let i = 0; i < puffs; i++) {
+    const a = (i / puffs) * Math.PI * 2 + id;
+    const wob = 0.55 + 0.45 * Math.sin(nowMs * 0.0024 + i * 1.7 + id);
+    const cxp = x + Math.cos(a) * rx * 0.40;
+    const cyp = y + Math.sin(a) * ry * 0.40;
+    const pr = rx * (0.42 + 0.16 * wob);
+    const pa = 0.09 * e * (0.6 + 0.4 * wob);
+    const pg = ctx.createRadialGradient(cxp, cyp, 1, cxp, cyp, pr);
+    pg.addColorStop(0, `rgba(255,255,255,${pa})`);
+    pg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = pg;
+    ctx.beginPath(); ctx.ellipse(cxp, cyp, pr, pr * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // Core mist disk, brightening toward the strike (charge).
+  const core = 0.12 * e + 0.20 * e * e;
+  const g = ctx.createRadialGradient(x, y, 1, x, y, rx);
+  g.addColorStop(0, `rgba(255,255,255,${core})`);
+  g.addColorStop(0.55, `rgba(244,250,255,${core * 0.55})`);
+  g.addColorStop(1, 'rgba(244,250,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 function drawPowerup(pu) {
   if (!powerupReady) return;
   const fx = powerupFx(pu);
@@ -1011,19 +1042,31 @@ function drawPowerup(pu) {
   const x = pu.x, y = pu.y + bob;
   const age = nowMs - fx.bornMs;
 
-  // Spawn pop: scale up from nothing with a little overshoot (first 320ms).
-  const scale = age < 320 ? Math.max(0, easeOutBack(age / 320)) : 1;
+  // Telegraph: a misty cloud disk gathers for PU_TELEGRAPH_MS, then the bolt strikes and
+  // the powerup lands. The warning gives nearby contesters a fair start; the icon stays
+  // hidden so the cloud never leaks the good/bad identity. liveAge measures time since
+  // the strike -- the pop/bolt/icon all key off it.
+  const liveAge = age - PU_TELEGRAPH_MS;
+  if (liveAge < 0) { drawPowerupShadow(pu.x, pu.y, age / PU_TELEGRAPH_MS, pu.id); return; }
+  // The crack lands with the bolt, not with the shadow -- once per powerup.
+  if (!fx.struck) {
+    fx.struck = true;
+    if (phase === 'active' && GameAudio && GameAudio.powerupSpawn) GameAudio.powerupSpawn();
+  }
+
+  // Spawn pop: scale up from nothing with a little overshoot (first 320ms after the strike).
+  const scale = liveAge < 320 ? Math.max(0, easeOutBack(liveAge / 320)) : 1;
   // Gentle idle pulse so it keeps catching the eye while it sits on the board.
   const pulse = 0.5 + 0.5 * Math.sin(nowMs / 360 + pu.id * 1.7);
 
   drawGroundShadow(x, y + 19, 24, 8, 0.34);
   powerupGlow(x, y, (28 + 4 * pulse) * Math.max(scale, 0.6), 0.16 + 0.07 * pulse);
 
-  // Lightning strike on spawn: a cluster of jagged bolts cracks down onto the new
-  // powerup and flickers out (replaces the old expanding telegraph ring).
-  if (age < BOLT_MS && fx.bolt) {
-    const e = 1 - age / BOLT_MS;
-    const flick = Math.pow(Math.abs(Math.cos(age * 0.05)), 0.6) * e;
+  // Lightning strike: a cluster of jagged bolts cracks down onto the powerup as it
+  // lands and flickers out.
+  if (liveAge < BOLT_MS && fx.bolt) {
+    const e = 1 - liveAge / BOLT_MS;
+    const flick = Math.pow(Math.abs(Math.cos(liveAge * 0.05)), 0.6) * e;
     lightningFlash(pu.x, pu.y, 30 + 48 * e, 0.62 * flick);
     drawBolt(fx.bolt, flick);
   }
@@ -1649,6 +1692,14 @@ function toggleSettings(force) {
   els.settingsBtn.setAttribute('aria-expanded', String(open));
 }
 
+// Power-up legend popover (avatar-stack button at the landing's top right).
+function toggleLegend(force) {
+  if (!els.legendMenu || !els.legendBtn) return;
+  const open = force != null ? force : els.legendMenu.classList.contains('hidden');
+  els.legendMenu.classList.toggle('hidden', !open);
+  els.legendBtn.setAttribute('aria-expanded', String(open));
+}
+
 // The bar collapses on the menu (canvas fills the whole screen for the attract
 // sim) and reappears in-game; toggling it changes the playfield, so re-size.
 function setBarVisible(v) {
@@ -1663,6 +1714,7 @@ function setBarVisible(v) {
 function setNavVisible(v) {
   document.body.classList.toggle('in-menu', v);
   if (!v && els.settingsMenu) els.settingsMenu.classList.add('hidden');
+  if (!v) toggleLegend(false);   // don't leave the legend open for the next visit
 }
 
 function initMenu() {
@@ -1707,16 +1759,22 @@ function leaveToMenu() {
 if (els.startForm) els.startForm.addEventListener('submit', (e) => { e.preventDefault(); startPlay(); });
 if (els.resultsMenuBtn) els.resultsMenuBtn.addEventListener('click', leaveToMenu);
 
-// Settings dropdown (gear at the bar's left edge).
-if (els.settingsBtn) els.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
-if (els.navSettings) els.navSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
+// Settings dropdown (gear at the bar's left edge). Opening either popover
+// closes the other so the two never stack on screen together.
+if (els.settingsBtn) els.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleLegend(false); toggleSettings(); });
+if (els.navSettings) els.navSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleLegend(false); toggleSettings(); });
 if (els.countdownToggle) els.countdownToggle.addEventListener('click', toggleCountdown);
 if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Number(els.volSlider.value)));
 if (els.musicSlider) els.musicSlider.addEventListener('input', () => setMusicVolume(Number(els.musicSlider.value)));
 if (els.sfxSlider) els.sfxSlider.addEventListener('input', () => setSfxVolume(Number(els.sfxSlider.value)));
 if (els.brushSlider) els.brushSlider.addEventListener('input', () => setBrushVolume(Number(els.brushSlider.value)));
 if (els.settingsMenu) els.settingsMenu.addEventListener('click', (e) => e.stopPropagation());
-document.addEventListener('click', () => toggleSettings(false));   // click outside closes it
+
+// Power-up legend popover (landing top right).
+if (els.legendBtn) els.legendBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(false); toggleLegend(); });
+if (els.legendMenu) els.legendMenu.addEventListener('click', (e) => e.stopPropagation());
+
+document.addEventListener('click', () => { toggleSettings(false); toggleLegend(false); });   // click outside closes them
 
 // ---- Boot -------------------------------------------------------------------
 resize();

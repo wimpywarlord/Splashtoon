@@ -55,16 +55,33 @@ const POWERUP_MAX = 2;
 const POWERUP_SPAWN_MS = 13_000;
 const POWERUP_TTL_MS = 6_000;
 const POWERUP_R = 28;
-// Powerups spawn at a RANDOM spot that's genuinely contestable: at least a couple
-// of players within POWERUP_SPAWN_CONTEST_R can race for it, but none inside
-// POWERUP_SPAWN_CLEAR_R (no freebie dropped at someone's feet). This inverts the old
-// "furthest from everyone" bias -- you can't farm pickups by drifting off alone,
-// since your empty area has no contesters and won't be chosen; spawns follow the
-// scrum. Falls back to any feet-clear spot if nobody's grouped up. TRIES caps the
-// sampling attempts.
+// A spawned powerup first appears as a gathering misty cloud disk for
+// POWERUP_TELEGRAPH_MS, then a lightning bolt strikes and it becomes grabbable. The
+// ~1s warning lets every nearby contester -- not just whoever happened to be closest
+// -- get a fair start on the sprint. Bots take a human-like beat to react, and some
+// miss the tell entirely (see bot-ai), so it doesn't just hand the pickup to the AI.
+const POWERUP_TELEGRAPH_MS = 1_100;
+// Endgame quiets down: a powerup that can't arm + be grabbed in time never spawns, and
+// in the last POWERUP_LATE_NO_SPAWN_MS only POWERUP_LATE_SPAWN_CHANCE of slots fire --
+// so a late pickup rarely decides the match.
+const POWERUP_LATE_NO_SPAWN_MS = 10_000;
+const POWERUP_LATE_SPAWN_CHANCE = 0.10;
+// Placement aims for a FAIR but EXHILARATING fight: of the sampled spots, choose one
+// where the nearest few players are about equally far (within POWERUP_FAIR_BAND px of
+// the closest, up to POWERUP_FAIR_K contesters), favouring a closest-contester sprint
+// near a per-spawn target. MOSTLY far (POWERUP_RUN_TARGET) for a real dash, but
+// POWERUP_CLOSE_SPAWN_CHANCE of the time it's a close POWERUP_RUN_CLOSE quick-draw where
+// first-to-move wins -- variety keeps it fresh. Never lands within POWERUP_SPAWN_CLEAR_R
+// of anyone (no freebie at someone's feet). Keeps the anti-farming property: a lone
+// player has no co-contesters, so spots by them never qualify -- spawns follow the
+// scrum. TRIES caps the sampling attempts.
 const POWERUP_SPAWN_TRIES = 56;
 const POWERUP_SPAWN_CLEAR_R = 160;
-const POWERUP_SPAWN_CONTEST_R = 380;
+const POWERUP_FAIR_BAND = 200;
+const POWERUP_FAIR_K = 4;
+const POWERUP_RUN_TARGET = 400;        // usual sprint distance to the closest contester
+const POWERUP_RUN_CLOSE = 200;         // the occasional quick-draw distance
+const POWERUP_CLOSE_SPAWN_CHANCE = 0.22;
 const BOOST_MS = POWERUP_EFFECT_MS;
 const BOOST_MULT = 2.0;
 const SLOW_MS = 4_000;
@@ -191,9 +208,16 @@ module.exports = {
   POWERUP_SPAWN_MS,
   POWERUP_TTL_MS,
   POWERUP_R,
+  POWERUP_TELEGRAPH_MS,
+  POWERUP_LATE_NO_SPAWN_MS,
+  POWERUP_LATE_SPAWN_CHANCE,
   POWERUP_SPAWN_TRIES,
   POWERUP_SPAWN_CLEAR_R,
-  POWERUP_SPAWN_CONTEST_R,
+  POWERUP_FAIR_BAND,
+  POWERUP_FAIR_K,
+  POWERUP_RUN_TARGET,
+  POWERUP_RUN_CLOSE,
+  POWERUP_CLOSE_SPAWN_CHANCE,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,

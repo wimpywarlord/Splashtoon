@@ -35,9 +35,16 @@ const {
   POWERUP_SPAWN_MS,
   POWERUP_TTL_MS,
   POWERUP_R,
+  POWERUP_TELEGRAPH_MS,
+  POWERUP_LATE_NO_SPAWN_MS,
+  POWERUP_LATE_SPAWN_CHANCE,
   POWERUP_SPAWN_TRIES,
   POWERUP_SPAWN_CLEAR_R,
-  POWERUP_SPAWN_CONTEST_R,
+  POWERUP_FAIR_BAND,
+  POWERUP_FAIR_K,
+  POWERUP_RUN_TARGET,
+  POWERUP_RUN_CLOSE,
+  POWERUP_CLOSE_SPAWN_CHANCE,
   BOOST_MS,
   BOOST_MULT,
   SLOW_MS,
@@ -537,33 +544,41 @@ class Room {
 
   spawnPowerup() {
     const t = now();
+    const armsAt = t + POWERUP_TELEGRAPH_MS;       // grabbable only after the strike
     const margin = 90;
-    // Pick a RANDOM spot a few players can fairly race for -- >=2 within contest
-    // range and none at point-blank (no freebie). This inverts the old "furthest
-    // from everyone" bias: isolating yourself no longer farms pickups (your empty
-    // area has no contesters, so it isn't chosen) -- spawns follow the scrum. Falls
-    // back to any feet-clear spot if nobody's grouped up.
+    // Pick a spot for a FAIR but EXHILARATING race: sample candidates, keep ones where
+    // the nearest few players are about equally far (each within FAIR_BAND of the
+    // closest, up to FAIR_K contesters), then score them so the closest contester has a
+    // real sprint -- a nearest distance near RUN_TARGET, not a tap at the centroid --
+    // with a bonus per extra contester (3-4 way races beat 2-way). Never at anyone's
+    // feet (>= CLEAR_R). A lone player has no co-contesters, so spots by them never
+    // qualify -- spawns follow the scrum, and you can't farm pickups by hiding.
     const actives = [];
     for (const p of this.players.values()) if (p.slot >= 0) actives.push(p);
-    const feetR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
-    const contestR2 = POWERUP_SPAWN_CONTEST_R * POWERUP_SPAWN_CONTEST_R;
-    let px = 0, py = 0, lcx = 0, lcy = 0, lsx = 0, lsy = 0, hasClear = false, found = false;
+    // Mostly a long dash; now and then a close quick-draw where first-to-move wins.
+    const runTarget = Math.random() < POWERUP_CLOSE_SPAWN_CHANCE ? POWERUP_RUN_CLOSE : POWERUP_RUN_TARGET;
+    const dists = [];
+    let best = Infinity;
+    let px = 0, py = 0, fbX = 0, fbY = 0, lsx = 0, lsy = 0, hasClear = false;
     for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
       const x = margin + Math.random() * (WORLD_W - 2 * margin);
       const y = margin + Math.random() * (WORLD_H - 2 * margin);
       lsx = x; lsy = y;
-      let nearest2 = Infinity, contesters = 0;
-      for (const p of actives) {
-        const dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
-        if (d2 < nearest2) nearest2 = d2;
-        if (d2 < contestR2) contesters++;
-      }
-      if (nearest2 >= feetR2) {
-        lcx = x; lcy = y; hasClear = true;                 // feet-clear (fallback)
-        if (contesters >= 2) { px = x; py = y; found = true; break; }   // random + contestable
-      }
+      dists.length = 0;
+      for (const p of actives) dists.push(Math.hypot(p.x - x, p.y - y));
+      dists.sort((a, b) => a - b);
+      if (!dists.length || dists[0] < POWERUP_SPAWN_CLEAR_R) continue;   // freebie at feet
+      fbX = x; fbY = y; hasClear = true;                                 // feet-clear fallback
+      // Largest k (<= FAIR_K) whose k nearest sit within FAIR_BAND of the closest.
+      let k = 1;
+      while (k < dists.length && k < POWERUP_FAIR_K && dists[k] - dists[0] <= POWERUP_FAIR_BAND) k++;
+      if (k < 2) continue;                                               // not a real race
+      // Lower is better: sprint length near this spawn's target, minus a bonus per
+      // extra contester (~one extra racer is worth being ~50px off the ideal run).
+      const score = Math.abs(dists[0] - runTarget) - 50 * k;
+      if (score < best) { best = score; px = x; py = y; }
     }
-    if (!found) { px = hasClear ? lcx : lsx; py = hasClear ? lcy : lsy; }
+    if (best === Infinity) { px = hasClear ? fbX : lsx; py = hasClear ? fbY : lsy; }
     const changes = pickPowerupSwitchCount();
     const type = pickWeightedPowerupType();
     this.powerups.push({
@@ -571,8 +586,9 @@ class Room {
       x: Math.round(px),
       y: Math.round(py),
       type,
-      expiresAt: t + POWERUP_TTL_MS,
-      switches: makePowerupSwitches(t, changes),
+      armsAt,
+      expiresAt: armsAt + POWERUP_TTL_MS,
+      switches: makePowerupSwitches(armsAt, changes),
       switchIndex: 0,
     });
   }
@@ -587,12 +603,14 @@ class Room {
   }
 
   publicPowerups() {
+    const t = now();
     return this.powerups.map((pu) => ({
       id: pu.id,
       x: pu.x,
       y: pu.y,
       type: pu.type,
       expiresAt: pu.expiresAt,
+      armed: t >= pu.armsAt,        // false while the shadow gathers; true after the strike
     }));
   }
 
@@ -751,14 +769,21 @@ class Room {
       this.powerups = this.powerups.filter((pu) => t < pu.expiresAt);
     }
     if (this.powerups.length < POWERUP_MAX && t - this.lastSpawnAt >= POWERUP_SPAWN_MS) {
-      this.spawnPowerup();
-      this.lastSpawnAt = t;
+      this.lastSpawnAt = t;                          // consume the slot even if we skip
+      const timeLeft = this.phaseEndsAt - t;
+      // No point spawning one that can't even arm + be grabbed before time, and the
+      // endgame mostly goes quiet: only ~1 in 10 powerups appears in the last 10s, so
+      // a late pickup rarely swings the finish.
+      const usable = timeLeft >= POWERUP_TELEGRAPH_MS + 800;
+      const lateOk = timeLeft > POWERUP_LATE_NO_SPAWN_MS || Math.random() < POWERUP_LATE_SPAWN_CHANCE;
+      if (usable && lateOk) this.spawnPowerup();
     }
     const reach = POWERUP_R + BRUSH_R;
     for (const p of this.players.values()) {
       if (p.slot < 0 || p.isEcho) continue;
       for (let i = this.powerups.length - 1; i >= 0; i--) {
         const pu = this.powerups[i];
+        if (t < pu.armsAt) continue;             // still gathering -- not grabbable yet
         if (this.powerupHit(p, pu, reach)) {
           this.powerups.splice(i, 1);
           this.applyPowerup(p, pu.type, t);

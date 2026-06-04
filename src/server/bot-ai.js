@@ -78,6 +78,10 @@ const DISRUPT_SHADOW_RETARGET_MIN_MS = 320;
 const DISRUPT_SHADOW_RETARGET_MAX_MS = 520;
 const DISRUPT_TURF_RETARGET_SCALE = 0.65;
 const DISRUPT_OBJECTIVE_RETARGET_SCALE = 0.75;
+// Like a human who wasn't watching that spot, a bot may miss the spawn telegraph
+// entirely and only register the powerup once the bolt strikes and it's live. Scaled
+// down by greed -- alert/greedy bots catch the tell more often than dozy ones.
+const TELEGRAPH_MISS_BASE = 0.55;
 
 // Self-harming powerup types. Bots read the icon and mostly steer clear; see
 // badGrabChance for how often a flipping icon fools one into grabbing anyway.
@@ -269,6 +273,7 @@ function createBotAI() {
     thinkUntil: 0,
     puId: null,
     puChase: false,
+    puReactAt: 0,      // human-like beat before it starts moving on a freshly-noticed powerup
     puReCheckAt: 0,
     puReadType: null,  // powerup type this bot last formed a verdict on
     puJudgeAt: 0,      // when the lean resolves into a verdict
@@ -775,6 +780,12 @@ function updateBot(p, room, dt, t) {
   if (pu) {
     if (ai.puId !== pu.id) {
       ai.puId = pu.id;                                       // newly noticed
+      // React a human beat before bolting for it -- and like a human who wasn't
+      // looking, sometimes miss the telegraph entirely and only clock it once it's
+      // live (then react from there). Greedier bots miss the tell less.
+      const reaction = rand(ai.reactMs[0], ai.reactMs[1]);
+      const missed = t < pu.armsAt && Math.random() < TELEGRAPH_MISS_BASE * (1 - 0.7 * ai.greed);
+      ai.puReactAt = (missed ? pu.armsAt : t) + reaction;
       ai.puChase = worthChasing(p, pu, room, ai, t);
       ai.puReCheckAt = t + 500;
       ai.puReadType = null;                                   // force a fresh read below
@@ -803,8 +814,10 @@ function updateBot(p, room, dt, t) {
         }
       }
     }
-    // Lean/commit toward it unless judged "avoid" (then steer clear of the pickup).
-    if (ai.puChase && ai.puVerdict !== 'avoid') { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
+    // Lean/commit toward it unless judged "avoid" (then steer clear of the pickup) --
+    // but only once the reaction beat has passed, so a fresh spawn/shadow doesn't pull
+    // the bot the instant it appears (no reflex-perfect snap a human can't match).
+    if (ai.puChase && ai.puVerdict !== 'avoid' && t >= ai.puReactAt) { ai.targetX = pu.x; ai.targetY = pu.y; urgent = true; }
     else if (ai.puVerdict === 'avoid') avoidPU = true;
   } else if (ai.puId !== null) {
     ai.puId = null;            // it was taken / expired -> resume territory now
