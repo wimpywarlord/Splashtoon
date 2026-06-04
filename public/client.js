@@ -108,6 +108,11 @@ const els = {
   connTitle: document.getElementById('conn-title'),
   connMsg: document.getElementById('conn-msg'),
   connBtn: document.getElementById('conn-btn'),
+  chat: document.getElementById('chat'),
+  chatLog: document.getElementById('chat-log'),
+  chatForm: document.getElementById('chat-form'),
+  chatInput: document.getElementById('chat-input'),
+  chatToggle: document.getElementById('chat-toggle'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -348,6 +353,7 @@ function handle(msg) {
   if (msg.roundMs != null) roundMs = msg.roundMs;   // round length for the pre-round clock
   switch (msg.t) {
     case 'pong': { onPong(msg.id); break; }
+    case 'chat': { onChat(msg); break; }
     case 'init': {
       myId = msg.id;
       currentRoomId = msg.roomId || '';
@@ -814,6 +820,115 @@ window.addEventListener('blur', () => { held.clear(); pushInput(); });
 window.addEventListener('focusin', (e) => {
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') { held.clear(); pushInput(); }
+});
+
+// ---- Quick chat ---------------------------------------------------------------
+// Tiny bottom-right strip, match only. The server is the real gatekeeper
+// (sanitize + word/length caps + per-player throttle in room.js); the client
+// mirrors the caps for live feedback and keeps the panel out of the way: it
+// fades to near-transparent (.idle) after a quiet spell, and Enter walks focus
+// in (global listener) and back out (send blurs) so hands stay on WASD. The
+// settings gear can switch it off entirely (persisted via Store prefs).
+const CHAT_MAX_WORDS = 10;     // keep in sync with config MAX_CHAT_WORDS
+const CHAT_LOG_MAX = 4;        // visible message lines before the oldest drops
+const CHAT_IDLE_MS = 5000;     // quiet spell before the panel fades
+const CHAT_THROTTLE_MS = 1500; // keep in sync with config CHAT_THROTTLE_MS
+let chatIdleTimer = null;
+
+function chatEnabled() {
+  return Store ? Store.getPrefs().chat !== false : true;
+}
+
+// Any chat activity (message in, focus, send) wakes the panel; it fades back
+// to .idle after the quiet spell unless someone is mid-typing.
+function chatWake() {
+  if (!els.chat) return;
+  els.chat.classList.remove('idle');
+  clearTimeout(chatIdleTimer);
+  chatIdleTimer = setTimeout(() => {
+    if (document.activeElement === els.chatInput) { chatWake(); return; }
+    els.chat.classList.add('idle');
+  }, CHAT_IDLE_MS);
+}
+
+// Reflect the setting: checkbox state + panel visibility (body.in-menu hides it
+// on the landing regardless). Turning chat off also drops the backlog.
+function syncChatUI() {
+  const on = chatEnabled();
+  if (els.chatToggle) els.chatToggle.checked = on;
+  if (els.chat) els.chat.classList.toggle('hidden', !on);
+  if (!on && els.chatLog) els.chatLog.textContent = '';
+}
+
+function clearChat() {
+  if (els.chatLog) els.chatLog.textContent = '';
+  if (els.chatInput) els.chatInput.value = '';
+}
+
+function onChat(msg) {
+  if (inMenu || !chatEnabled() || !els.chatLog) return;
+  const line = document.createElement('div');
+  line.className = 'chat-line';
+  const name = document.createElement('span');
+  name.className = 'chat-name';
+  const slot = Number.isInteger(msg.slot) ? msg.slot : -1;
+  // Spectators chat with slot -1 -> neutral; seated players get their paint color.
+  name.style.color = slot >= 0 && palette[slot] ? palette[slot] : 'var(--st-muted-fg)';
+  name.textContent = String(msg.name || '');
+  const text = document.createElement('span');
+  text.textContent = String(msg.text || '');   // textContent: no markup path, ever
+  line.append(name, text);
+  els.chatLog.appendChild(line);
+  while (els.chatLog.children.length > CHAT_LOG_MAX) els.chatLog.firstChild.remove();
+  chatWake();
+}
+
+let lastChatSentAt = -Infinity;   // client mirror of the server throttle
+
+function sendChat() {
+  if (!els.chatInput) return;
+  let text = els.chatInput.value.replace(/\s+/g, ' ').trim();
+  if (text) {
+    // Mirror the server's per-player throttle: hammering Enter inside the window
+    // keeps the text and focus (try again in a beat) instead of firing frames
+    // the server would silently drop -- the player sees their message intact.
+    const t = performance.now();
+    if (t - lastChatSentAt < CHAT_THROTTLE_MS) return;
+    lastChatSentAt = t;
+    const words = text.split(' ');
+    if (words.length > CHAT_MAX_WORDS) text = words.slice(0, CHAT_MAX_WORDS).join(' ');
+    send({ t: 'chat', text });
+  }
+  els.chatInput.value = '';
+  els.chatInput.blur();            // hand the keys straight back to the brush
+  chatWake();
+}
+
+if (els.chatForm) els.chatForm.addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
+if (els.chatInput) {
+  els.chatInput.addEventListener('focus', chatWake);
+  els.chatInput.addEventListener('blur', chatWake);    // restart the idle clock on the way out
+  els.chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); els.chatInput.blur(); }
+  });
+  // Live word cap: typing visibly stops accepting an 11th word (the maxlength
+  // attribute already bounds raw characters). Trims only AT the limit, so the
+  // cursor jump to the end never happens during normal typing.
+  els.chatInput.addEventListener('input', () => {
+    const words = els.chatInput.value.split(/\s+/).filter(Boolean);
+    if (words.length > CHAT_MAX_WORDS) els.chatInput.value = words.slice(0, CHAT_MAX_WORDS).join(' ');
+  });
+}
+
+// Enter opens the chat box mid-match (Enter again sends, via the form). Skipped
+// while any field/button has focus so it never steals a real Enter.
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+  if (inMenu || !chatEnabled() || !els.chatInput) return;
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+  e.preventDefault();
+  els.chatInput.focus();
 });
 
 // ---- Prediction + interpolation --------------------------------------------
@@ -1965,6 +2080,7 @@ function initMenu() {
   setBarVisible(true);
   setNavVisible(true);
   hide(els.spectate);
+  clearChat();
   stopResultConfetti();
   hide(els.results);
   setCountdown('');                          // clear any leftover countdown overlay
@@ -1987,6 +2103,9 @@ function startPlay() {
   if (GameAudio) { GameAudio.unlock(); syncSoundUI(); }   // unlock within the click gesture (music already on)
   setBarVisible(true);
   setNavVisible(false);
+  clearChat();
+  syncChatUI();
+  chatWake();           // show the chat hint briefly, then it fades
   connect();            // open the connection only now
 }
 
@@ -2007,6 +2126,11 @@ if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Numbe
 if (els.musicSlider) els.musicSlider.addEventListener('input', () => setMusicVolume(Number(els.musicSlider.value)));
 if (els.sfxSlider) els.sfxSlider.addEventListener('input', () => setSfxVolume(Number(els.sfxSlider.value)));
 if (els.brushSlider) els.brushSlider.addEventListener('input', () => setBrushVolume(Number(els.brushSlider.value)));
+if (els.chatToggle) els.chatToggle.addEventListener('change', () => {
+  if (Store) Store.setPrefs({ chat: els.chatToggle.checked });
+  syncChatUI();
+});
+syncChatUI();
 
 // Landing tutorial-sim player count: the gear dropdown's left/right stepper (you + 1..5
 // bots, total 2..6). Persists immediately; takes effect at the NEXT sim round (the rebuild

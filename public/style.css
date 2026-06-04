@@ -587,6 +587,65 @@ html, body {
   line-height: 1.35;
   margin-top: 0;
 }
+/* Quick chat: a tiny strip in the board's bottom-right corner (mirrors the
+   spectate banner's bottom-left footprint). Deliberately small -- messages are
+   server-capped at 10 words -- and the whole panel fades to near-invisible when
+   nothing is happening (.idle, set by client.js after a quiet spell; hovering
+   or focusing wakes it). Match only: the landing sim has no one to talk to. */
+#chat {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: min(264px, calc(100% - 28px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  /* Above the results modal (2147483000): round-end chatter (incl. bot quips)
+     lands DURING the intermission scoreboard, and a corner "gg" floating over
+     the results reads natural -- hidden behind the modal it may as well not
+     exist. No other surface lives in this corner. */
+  z-index: 2147483200;
+  transition: opacity 0.6s ease;
+}
+#chat.hidden { display: none; }
+body.in-menu #chat { display: none; }
+#chat.idle { opacity: 0.15; }
+#chat.idle:hover { opacity: 1; }
+#chat-log {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  max-width: 100%;
+}
+.chat-line {
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: rgba(18, 21, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--st-fg);
+  overflow-wrap: anywhere;          /* a 60-char unbroken "word" wraps instead of escaping the strip */
+}
+.chat-name { font-weight: 700; margin-right: 5px; }
+#chat-form { width: 100%; }
+#chat-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--st-fg);
+  background: rgba(18, 21, 30, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 9px;
+  outline: none;
+}
+#chat-input::placeholder { color: var(--st-muted-fg); opacity: 0.75; }
+#chat-input:focus { border-color: var(--st-ring); }
 .big {
   font-size: 40px;
   font-weight: 800;
@@ -824,6 +883,8 @@ body.in-menu #topbar .stats:empty { display: none; }
 /* Fixed label column so every slider starts at the same x and spans the same width. */
 .settings-row > span { flex: none; width: 52px; }
 .settings-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--st-primary); cursor: pointer; }
+/* Chat on/off (space-between pushes the box to the slider edge). */
+.settings-row-chat input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--st-primary); cursor: pointer; }
 /* Players stepper -- landing only (a real match is always server-filled to 6). */
 .settings-row-players { display: none; }
 body.in-menu .settings-row-players { display: flex; }

@@ -9,6 +9,7 @@
   const KEY_STATS = NS + '.stats';
   const KEY_AUDIO = NS + '.audio';
   const KEY_SIM = NS + '.sim';
+  const KEY_PREFS = NS + '.prefs';
 
   function readJSON(key, fallback) {
     try {
@@ -26,6 +27,7 @@
   const DEFAULT_STATS = { bestCoverage: 0, wins: 0, matches: 0, winStreak: 0, bestStreak: 0, lastResultId: '' };
   const DEFAULT_AUDIO = { muted: false, volume: 0.7, musicVol: 1, sfxVol: 1, brushVol: 1, countdown: true };
   const DEFAULT_SIM = { players: 6 };   // landing tutorial-sim player count (you + bots), 2..6
+  const DEFAULT_PREFS = { chat: true }; // misc UI prefs (chat panel on/off via settings)
 
   function finiteNumber(v, fallback) {
     const n = Number(v);
@@ -89,5 +91,12 @@
     writeJSON(KEY_SIM, Object.assign(getSim(), patch));
   }
 
-  global.SplashtoonStore = { getName, setName, getStats, recordResult, getAudio, setAudio, getSim, setSim };
+  function getPrefs() {
+    return Object.assign({}, DEFAULT_PREFS, readJSON(KEY_PREFS, {}));
+  }
+  function setPrefs(patch) {
+    writeJSON(KEY_PREFS, Object.assign(getPrefs(), patch));
+  }
+
+  global.SplashtoonStore = { getName, setName, getStats, recordResult, getAudio, setAudio, getSim, setSim, getPrefs, setPrefs };
 })(window);

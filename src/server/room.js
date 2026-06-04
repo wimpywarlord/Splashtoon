@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 const { Player } = require('./player');
-const { createBotAI, updateBot, pickName } = require('./bot-ai');
+const { createBotAI, updateBot, pickName, pickQuip } = require('./bot-ai');
 const {
   GRID_W,
   GRID_H,
@@ -70,6 +70,12 @@ const {
   PALETTE,
   COUNTDOWN_SPAWNS,
   MAX_NAME_LEN,
+  MAX_CHAT_WORDS,
+  MAX_CHAT_LEN,
+  CHAT_THROTTLE_MS,
+  BOT_QUIP_CHANCE,
+  BOT_QUIP_DELAY_MS_MIN,
+  BOT_QUIP_DELAY_MS_MAX,
   COARSE_ZW,
   COARSE_ZH,
   BOT_COARSE_MS,
@@ -163,14 +169,28 @@ function closestPointDist2(ax, ay, bx, by, px, py) {
   return x * x + y * y;
 }
 
-// Clean a client-supplied display name so it is safe to store/render and can't
+// Clean any client-supplied display text so it is safe to store/render and can't
 // wreck the UI. Order matters: compose accents first (NFC) so a legit "e-acute"
 // survives as one code point, THEN strip what actually breaks layout. CSS
 // ellipsis only bounds WIDTH, so the vertical/structural attacks must die here,
-// not in the stylesheet. Length is bounded by code points (not UTF-16 units) so
-// emoji aren't sliced into broken surrogate halves.
-function sanitizeName(raw) {
+// not in the stylesheet. Shared by the name and chat sanitizers, which differ
+// only in how they cap length (see below).
+// Hard gate BEFORE normalization: NFC + the banned-cp walk touch every unit of
+// the input, so a scripted multi-megabyte "chat"/"rename" would burn server CPU
+// before the tiny caps even run. Both caps are <= 60 code points, so a generous
+// UTF-16 prefix loses nothing legitimate -- even fully decomposed accents fit
+// with room to spare. (The frame-level maxPayload in game.js is the outer wall;
+// this keeps the sanitizer itself O(1) regardless.)
+const MAX_RAW_TEXT_UNITS = 400;
+
+function cleanText(raw) {
   if (typeof raw !== 'string' || raw === '') return '';
+  if (raw.length > MAX_RAW_TEXT_UNITS) {
+    raw = raw.slice(0, MAX_RAW_TEXT_UNITS);
+    // Never let the cut strand a high surrogate: a broken pair must not enter
+    // the pipeline (it isn't a banned cp, so it could survive to the output).
+    if (/[\ud800-\udbff]$/.test(raw)) raw = raw.slice(0, -1);
+  }
   // Banned code points: invisible, control, markup, or text-reordering -- the
   // stuff CSS can't save us from. Tested numerically so this source stays ASCII.
   const banned = (cp) =>
@@ -187,10 +207,29 @@ function sanitizeName(raw) {
   s = s.replace(/\s+/g, ' ');               // collapse any whitespace run to a single space
   // Strip leading whitespace AND combining marks TOGETHER, after the collapse -- order
   // matters: a leading space would otherwise hide a following mark from the strip, and a
-  // later trim would re-expose it (a name must never start with a mark). Then trailing ws.
-  s = s.replace(/^[\s\p{M}]+/u, '').replace(/\s+$/u, '');
+  // later trim would re-expose it (text must never start with a mark). Then trailing ws.
+  return s.replace(/^[\s\p{M}]+/u, '').replace(/\s+$/u, '');
+}
+
+// Display name: length is bounded by code points (not UTF-16 units) so emoji
+// aren't sliced into broken surrogate halves.
+function sanitizeName(raw) {
+  let s = cleanText(raw);
   const cps = [...s];                       // count by code point, not UTF-16 unit
   if (cps.length > MAX_NAME_LEN) s = cps.slice(0, MAX_NAME_LEN).join('').trim();
+  return s;
+}
+
+// Quick-chat message: capped by WORDS first (the product limit -- a shout, not a
+// paragraph), then by code points so one giant unbroken "word" can't dodge the
+// word cap. Same code-point slicing rule as names keeps emoji intact.
+function sanitizeChat(raw) {
+  let s = cleanText(raw);
+  if (!s) return '';
+  const words = s.split(' ');
+  if (words.length > MAX_CHAT_WORDS) s = words.slice(0, MAX_CHAT_WORDS).join(' ');
+  const cps = [...s];
+  if (cps.length > MAX_CHAT_LEN) s = cps.slice(0, MAX_CHAT_LEN).join('').trim();
   return s;
 }
 
@@ -931,6 +970,31 @@ class Room {
       tie,
       intermissionMs: INTERMISSION_MS,
     });
+    this.maybeBotQuip();
+  }
+
+  // Sometimes ONE bot drops a round-end "gg" so a bot-backfilled room doesn't
+  // read as dead air the moment a human chats. Rare + delayed + never the same
+  // line twice in a row: canned chatter every round would be a stronger bot-tell
+  // than silence. Humans-only rooms are untouched (bots list is empty) and empty
+  // rooms don't bother (nobody to keep the illusion for).
+  maybeBotQuip() {
+    if (this.humanCount() === 0) return;
+    if (Math.random() > BOT_QUIP_CHANCE) return;
+    const bots = [];
+    for (const p of this.players.values()) if (p.isBot && p.slot >= 0 && !p.isEcho) bots.push(p);
+    if (!bots.length) return;
+    const bot = bots[Math.floor(Math.random() * bots.length)];
+    const text = pickQuip(bot.slot === this.lastWinnerSlot, this.lastBotQuip);
+    if (!text) return;
+    this.lastBotQuip = text;
+    const delay = BOT_QUIP_DELAY_MS_MIN + Math.random() * (BOT_QUIP_DELAY_MS_MAX - BOT_QUIP_DELAY_MS_MIN);
+    setTimeout(() => {
+      // The room may have moved on while the bot was "typing": fired only if the
+      // bot still holds its seat and a human is still around to see it.
+      if (this.players.get(bot.id) !== bot || this.humanCount() === 0) return;
+      this.broadcast({ t: 'chat', slot: bot.slot, name: bot.name, text });
+    }, delay);
   }
 
   // Advance one sim step. doBroadcast gates the (lower-rate) state snapshot;
@@ -1137,6 +1201,17 @@ class Room {
       } else if (msg.t === 'rename') {
         const nm = sanitizeName(msg.name);
         if (nm) p.name = nm;
+      } else if (msg.t === 'chat') {
+        // Quick chat: sanitize + word/length cap server-side (the client input is
+        // advisory), throttle per player so a script can't flood the room, and
+        // relay with the sender's seat so clients color the name. Bots have no
+        // socket, so chat is humans-only by construction.
+        const t = now();
+        if (t - (p.lastChatAt || 0) < CHAT_THROTTLE_MS) return;
+        const text = sanitizeChat(msg.text);
+        if (!text) return;
+        p.lastChatAt = t;
+        this.broadcast({ t: 'chat', slot: p.slot, name: p.name, text });
       } else if (msg.t === 'ping') {
         this.send(ws, { t: 'pong', id: msg.id });   // echo the client clock for round-trip latency
       } else if (msg.t === 'resync') {
@@ -1160,4 +1235,4 @@ class Room {
   }
 }
 
-module.exports = { Room, sanitizeName };
+module.exports = { Room, sanitizeName, sanitizeChat };

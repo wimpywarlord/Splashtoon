@@ -126,6 +126,10 @@
         <span>Brush</span>
         <input id="brush-slider" type="range" min="0" max="100" value="100" />
       </label>
+      <label class="settings-row settings-row-chat">
+        <span>Chat</span>
+        <input id="chat-toggle" type="checkbox" checked />
+      </label>
       <div class="settings-row settings-row-players">
         <span>Players</span>
         <div class="stepper">
@@ -134,6 +138,17 @@
           <button id="players-inc" class="stepper-btn" type="button" aria-label="More players">&#9654;</button>
         </div>
       </div>
+    </div>
+
+    <!-- Quick chat (match only, bottom right; mirrors the spectate banner's
+         corner footprint). Tiny on purpose: 10 words max, server-enforced. The
+         whole panel fades to near-transparent when idle (see #chat.idle) and
+         can be switched off entirely from the settings gear. -->
+    <div id="chat" class="hidden">
+      <div id="chat-log" aria-live="polite" aria-label="Chat messages"></div>
+      <form id="chat-form" autocomplete="off">
+        <input id="chat-input" type="text" maxlength="60" placeholder="Press Enter to chat" spellcheck="false" aria-label="Chat message (10 words max)" />
+      </form>
     </div>
 
     <!-- Spectator banner -->

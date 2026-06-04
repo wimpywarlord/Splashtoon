@@ -22,7 +22,11 @@ const {
 } = require('./config');
 
 function createGameServer(server) {
-  const wss = new WebSocketServer({ server });
+  // maxPayload: every legit client->server message (input/chat/rename/ping/
+  // resync) is well under 1 KiB of JSON; 4 KiB leaves headroom while a
+  // scripted multi-megabyte frame is rejected at the protocol layer (1009 close)
+  // before it is ever buffered into a string or parsed.
+  const wss = new WebSocketServer({ server, maxPayload: 4096 });
   const rooms = new Map();        // roomId -> Room
   let nextRoomId = 1;
   let idCounter = 1;              // globally-unique player ids across all rooms

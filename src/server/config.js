@@ -188,6 +188,21 @@ const COUNTDOWN_SPAWNS = [
 // client input so the limit is the same everywhere.
 const MAX_NAME_LEN = 10;
 
+// Quick-chat caps: deliberately tiny (a paint shout, not a chat room). Words are
+// the primary bound; the code-point cap stops one 60-char "word" from dodging
+// it. Keep the client input's maxlength in sync with MAX_CHAT_LEN.
+const MAX_CHAT_WORDS = 10;
+const MAX_CHAT_LEN = 60;
+const CHAT_THROTTLE_MS = 1500;   // min gap between chat messages per player
+
+// Bot round-end quips: sometimes ONE bot drops a short "gg" after the round so a
+// bot-backfilled room doesn't read as dead air the moment a human says hi. Rare
+// by design -- canned lines repeated every round are a stronger bot-tell than
+// silence. The delay window makes it land like a human typing it, not a metronome.
+const BOT_QUIP_CHANCE = 0.35;        // per round, room-wide (one bot at most)
+const BOT_QUIP_DELAY_MS_MIN = 1400;  // "typed it after seeing the scoreboard"
+const BOT_QUIP_DELAY_MS_MAX = 4200;
+
 module.exports = {
   PORT,
   GRID_W,
@@ -258,4 +273,10 @@ module.exports = {
   PALETTE,
   COUNTDOWN_SPAWNS,
   MAX_NAME_LEN,
+  MAX_CHAT_WORDS,
+  MAX_CHAT_LEN,
+  CHAT_THROTTLE_MS,
+  BOT_QUIP_CHANCE,
+  BOT_QUIP_DELAY_MS_MIN,
+  BOT_QUIP_DELAY_MS_MAX,
 };

@@ -259,6 +259,34 @@ function pickName(taken) {
   return [...base].slice(0, Math.max(1, MAX_NAME_LEN - suffix.length)).join('') + suffix;
 }
 
+// Round-end chat quips (see Room.maybeBotQuip). Short, lowercase, .io-lobby
+// register; every line must survive sanitizeChat UNCHANGED (<= 10 words, clean
+// ASCII) -- there's a test pinning that. Two moods so the line matches the
+// scoreboard; the generic lines live in both so winners aren't always smug.
+// NOTE: no apostrophes/quotes -- the chat sanitizer strips them, and the test
+// asserts every line passes through unchanged.
+const QUIPS_WON = [
+  'gg', 'ggs', 'greatest', 'later', 'losers', 'wiped the floor', 'gg wp', 'gg all', 'gg go next',
+  'ez', 'too ez', 'ez clap', 'clean sweep', 'my canvas now', 'mine', 'rekt', 'get gud', 'better',
+  'get painted', 'painted u all', 'who wants round 2', 'all skill', 'warmup round', 'cry',
+];
+const QUIPS_LOST = [
+  'gg', 'fck u all', 'ggs', 'dieee', 'gg wp', 'gg all', 'nice one', 'screw you',
+  'close one', 'so close', 'almost had it', 'nooo', 'not again', 'f',
+  'rematch', 'leave me alone', 'one more', 'run it back', 'next one is mine', 'im warming up',
+  'lag', 'i blame lag', 'my keyboard died', 'rigged', 'carried by spawns', 'respec', 'stop it',
+  'get a job', 'Arghhhh', 'hate it',
+  'freezezzzz', 'that mortar tho', 'how', 'bro', 'ok that was clean',
+];
+
+// Pick a quip for a bot that just won/lost, never repeating `avoid` (the room's
+// previous bot quip) so two quiet rounds apart can't echo the same line.
+function pickQuip(won, avoid) {
+  const pool = (won ? QUIPS_WON : QUIPS_LOST).filter((q) => q !== avoid);
+  if (!pool.length) return '';
+  return pool[randInt(0, pool.length - 1)];
+}
+
 function createBotAI() {
   const kind = pickPersonalityName();
   const t = PERSONALITIES[kind];
@@ -921,4 +949,4 @@ function updateBot(p, room, dt, t) {
   p.my = Math.sin(ai.aimAngle);
 }
 
-module.exports = { createBotAI, updateBot, pickName, NAME_POOL };
+module.exports = { createBotAI, updateBot, pickName, pickQuip, NAME_POOL, QUIPS_WON, QUIPS_LOST };
