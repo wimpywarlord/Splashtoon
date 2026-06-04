@@ -64,8 +64,9 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const ARENA_BG = '#14171f';   // dark arena surface; neon paint and brushes pop against it
 // Chrome matches the arena exactly: on viewports taller/wider than 16:9 the
-// CONTAIN slack around the board would otherwise read as a two-tone band. The
-// frame stroke in render() still marks the playable bounds.
+// CONTAIN slack around the board reads as one surface with the board. NOTE: the
+// board frame stroke has been removed, so with chrome == arena the playable bounds
+// are now unmarked (paint just stops at the edge).
 const CHROME_BG = ARENA_BG;
 ctx.imageSmoothingEnabled = true;   // smooth sprite + paint scaling (was pixelated)
 
@@ -98,6 +99,9 @@ const els = {
   musicSlider: document.getElementById('music-slider'),
   sfxSlider: document.getElementById('sfx-slider'),
   brushSlider: document.getElementById('brush-slider'),
+  playersDec: document.getElementById('players-dec'),
+  playersInc: document.getElementById('players-inc'),
+  playersVal: document.getElementById('players-val'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -290,8 +294,15 @@ function handle(msg) {
     }
     case 'impact': {
       // Meteor paint lands as an irregular splatter, while the ring gives impact.
-      if (Array.isArray(msg.blobs)) drawPaintSplatter(msg.blobs, msg.slot);
-      else drawPaintDisc(msg.x, msg.y, msg.r, msg.slot);
+      // 'mortar' strikes (erase) WIPE paint instead of laying it.
+      if (msg.erase) {
+        if (Array.isArray(msg.blobs)) erasePaintSplatter(msg.blobs);
+        else erasePaintDisc(msg.x, msg.y, msg.r);
+      } else if (Array.isArray(msg.blobs)) {
+        drawPaintSplatter(msg.blobs, msg.slot);
+      } else {
+        drawPaintDisc(msg.x, msg.y, msg.r, msg.slot);
+      }
       impacts.push({ x: msg.x, y: msg.y, r: msg.r, slot: msg.slot, start: nowMs });
       if (GameAudio) GameAudio.impact();
       break;
@@ -459,7 +470,8 @@ function replayPaintEvents(events) {
     } else if (ev.t === 'disc') {
       drawPaintDisc(ev.x, ev.y, ev.r, slot);
     } else if (ev.t === 'splatter') {
-      drawPaintSplatter(ev.blobs, slot);
+      if (ev.erase) erasePaintSplatter(ev.blobs);
+      else drawPaintSplatter(ev.blobs, slot);
     } else if (ev.t === 'wipe') {
       // "Snap" replay: clear the wiped half so a join/refresh matches the live board.
       paintCtx.clearRect(ev.x, ev.y, ev.w, ev.h);
@@ -497,6 +509,40 @@ function drawPaintSplatter(blobs, slot) {
   for (let i = 0; i < blobs.length; i++) {
     const b = blobs[i];
     drawPaintBlob(b.x, b.y, b.r, slot, b.x * 0.23 + b.y * 0.41 + i * 19.7);
+  }
+}
+
+// Erase variants: the same blob shapes, composited to CLEAR the paint layer -- "mortar"
+// craters wipe paint instead of laying it (mirrors the destination-out erase strokes).
+function erasePaintBlob(x, y, r, seed) {
+  if (!paintCtx || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(r)) return;
+  const points = Math.max(7, Math.min(13, Math.round(r / 2.8) + 4));
+  paintCtx.save();
+  paintCtx.globalCompositeOperation = 'destination-out';
+  paintCtx.fillStyle = 'rgba(0,0,0,1)';
+  paintCtx.beginPath();
+  for (let i = 0; i < points; i++) {
+    const a = (i / points) * Math.PI * 2;
+    const wobble = 0.78 + Math.abs(jitter(seed + i * 13.3)) * 0.42;
+    const px = x + Math.cos(a) * r * wobble;
+    const py = y + Math.sin(a) * r * wobble;
+    if (i === 0) paintCtx.moveTo(px, py);
+    else paintCtx.lineTo(px, py);
+  }
+  paintCtx.closePath();
+  paintCtx.fill();
+  paintCtx.restore();
+}
+
+function erasePaintDisc(x, y, r) {
+  erasePaintBlob(x, y, r, x * 0.31 + y * 0.17 + r);
+}
+
+function erasePaintSplatter(blobs) {
+  if (!Array.isArray(blobs)) return;
+  for (let i = 0; i < blobs.length; i++) {
+    const b = blobs[i];
+    erasePaintBlob(b.x, b.y, b.r, b.x * 0.23 + b.y * 0.41 + i * 19.7);
   }
 }
 
@@ -1263,15 +1309,7 @@ function render() {
   drawBoardContent();
   ctx.restore();
 
-  // Subtle framed-panel edge around the board so the margins look intentional.
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-  ctx.shadowBlur = 20 * dpr;
-  ctx.shadowOffsetY = 5 * dpr;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-  ctx.lineWidth = Math.max(1, dpr);
-  ctx.strokeRect(ox * dpr + 0.5, oy * dpr + 0.5, bw * dpr - 1, bh * dpr - 1);
-  ctx.restore();
+  // Board frame/border removed (was a subtle white strokeRect + drop shadow here).
 
   // Brushes UNCLIPPED on top -> their tips can poke up over the bar.
   ctx.setTransform(z * dpr, 0, 0, z * dpr, ox * dpr, oy * dpr);
@@ -1291,29 +1329,6 @@ function fmtTime(ms) {
 let lastCountdownPhase = '';
 let goUntil = 0;
 
-const COUNTDOWN_CROWN_SPRITES = {
-  '3': [
-    { cls: 'sc-sprite-main', row: 3, col: 1 },
-    { cls: 'sc-sprite-second', row: 7, col: 2 },
-    { cls: 'sc-sprite-third', row: 6, col: 2 },
-  ],
-  '2': [
-    { cls: 'sc-sprite-main', row: 5, col: 2 },
-    { cls: 'sc-sprite-second', row: 3, col: 4 },
-    { cls: 'sc-sprite-third', row: 6, col: 4 },
-  ],
-  '1': [
-    { cls: 'sc-sprite-main', row: 7, col: 4 },
-    { cls: 'sc-sprite-second', row: 4, col: 1 },
-    { cls: 'sc-sprite-third', row: 6, col: 6 },
-  ],
-  'GO!': [
-    { cls: 'sc-sprite-main', row: 4, col: 3 },
-    { cls: 'sc-sprite-second', row: 7, col: 0 },
-    { cls: 'sc-sprite-third', row: 6, col: 0 },
-  ],
-};
-
 const COUNTDOWN_CROWN_COLORS = {
   '3': { a: '#ff4d8d', b: '#ffd23f' },
   '2': { a: '#36d8ff', b: '#7c4dff' },
@@ -1323,10 +1338,6 @@ const COUNTDOWN_CROWN_COLORS = {
 
 function renderCountdownCrown(text) {
   const colors = COUNTDOWN_CROWN_COLORS[text] || COUNTDOWN_CROWN_COLORS['3'];
-  const sprites = COUNTDOWN_CROWN_SPRITES[text] || COUNTDOWN_CROWN_SPRITES['3'];
-  const spriteHtml = sprites.map((sprite) => (
-    `<span class="sc-sprite ${sprite.cls}" style="--row:${sprite.row}; --col:${sprite.col};" aria-hidden="true"></span>`
-  )).join('');
 
   return `
     <span class="sc-beam sc-beam-a" aria-hidden="true"></span>
@@ -1341,7 +1352,6 @@ function renderCountdownCrown(text) {
       <span class="sc-ring" aria-hidden="true"></span>
       <span class="sc-swash" aria-hidden="true"></span>
       <span class="sc-digit">${text}</span>
-      ${spriteHtml}
     </div>
   `;
 }
@@ -1705,7 +1715,6 @@ function renderStats(opts = {}) {
   if (!hasStats) { els.stats.innerHTML = ''; return; }
   const cells = [
     { label: 'Wins', value: s.wins, decimals: 0 },
-    { label: 'Best %', value: s.bestCoverage, decimals: 1 },
     { label: 'Streak', value: s.winStreak, decimals: 0 },
   ];
   const animate = !!opts.animate;
@@ -1866,6 +1875,30 @@ if (els.volSlider) els.volSlider.addEventListener('input', () => setVolume(Numbe
 if (els.musicSlider) els.musicSlider.addEventListener('input', () => setMusicVolume(Number(els.musicSlider.value)));
 if (els.sfxSlider) els.sfxSlider.addEventListener('input', () => setSfxVolume(Number(els.sfxSlider.value)));
 if (els.brushSlider) els.brushSlider.addEventListener('input', () => setBrushVolume(Number(els.brushSlider.value)));
+
+// Landing tutorial-sim player count: the gear dropdown's left/right stepper (you + 1..5
+// bots, total 2..6). Persists immediately; takes effect at the NEXT sim round (the rebuild
+// happens in simNextRound) -- a real match is always server-filled, so this is landing-only.
+function syncPlayersUI() {
+  const n = Store ? Store.getSim().players : 6;
+  if (els.playersVal) els.playersVal.textContent = String(n);
+  if (els.playersDec) els.playersDec.disabled = n <= 2;
+  if (els.playersInc) els.playersInc.disabled = n >= 6;
+}
+function stepSimPlayers(d) {
+  if (!Store) return;
+  const cur = Math.max(2, Math.min(6, (Store.getSim().players | 0) || 6));
+  const next = Math.max(2, Math.min(6, cur + d));
+  if (next === cur) return;
+  Store.setSim({ players: next });
+  syncPlayersUI();
+  // Not started yet (still idling under the "you" arrow)? Apply it right now. Once the
+  // round is live it waits for the next round (non-disruptive mid-game).
+  if (typeof SIM === 'object' && SIM.started && SIM.stage === 'waiting') simRebuildBots();
+}
+if (els.playersDec) els.playersDec.addEventListener('click', () => stepSimPlayers(-1));
+if (els.playersInc) els.playersInc.addEventListener('click', () => stepSimPlayers(1));
+syncPlayersUI();
 if (els.settingsMenu) els.settingsMenu.addEventListener('click', (e) => e.stopPropagation());
 
 // Power-up legend popover (landing top right).
@@ -1897,8 +1930,8 @@ const SIM_FIRST_SPAWN_MS = 1400;     // first portal after the visitor starts mo
 const SIM_SPAWN_GAP_MS = 900;        // breath between an effect ending and the next portal
 const SIM_RESPAWN_GAP_MS = 1500;     // pause after an unclaimed pickup expires
 const SIM_EFFECT_MS = {              // per-type effect windows (server *_MS)
-  speed: 4000, slow: 4000, freeze: 3500, inkjam: 3500, erase: 5000, convert: 4000,
-  selfFreeze: 3000, selfInkjam: 3000, mega: 4000, tiny: 5000, echo: 7000, missile: 4000,
+  speed: 4000, slow: 4000, freeze: 3500, inkjam: 3500, erase: 5000,
+  selfFreeze: 3000, selfInkjam: 3000, mega: 4000, tiny: 5000, echo: 5500, missile: 4000, mortar: 4000,
 };
 // How long a collected lesson holds the stage before the next portal may open.
 // Timed effects own their full window; the instant ones get a readability beat.
@@ -1913,31 +1946,29 @@ const SIM_MISSILE_COUNT = 12;
 const SIM_MISSILE_DELAY_MS = 200;
 const SIM_MISSILE_INTERVAL_MS = Math.floor((SIM_EFFECT_MS.missile - SIM_MISSILE_DELAY_MS) / (SIM_MISSILE_COUNT - 1));
 const SIM_CRATER_R = 36;
+const SIM_MORTAR_CRATER_R = 46;      // "mortar" erasing shower -> bigger craters than a paint missile
 // The twist: flip odds + timing, straight from POWERUP_SWITCH_CHANCES /
-// makePowerupSwitches. Flips draw from the weighted pool; fresh SPAWNS instead
-// use a shuffle bag over all types so a visitor sees everything without repeats.
+// makePowerupSwitches. A flip is now a 50/50 boon-or-hazard coin toss (mirror of
+// pickFlipType); fresh SPAWNS instead use a shuffle bag over all types so a visitor
+// sees everything without repeats.
 const SIM_SWITCH_CHANCES = [
-  { changes: 0, weight: 0.02 },
-  { changes: 1, weight: 0.47 },
+  { changes: 0, weight: 0.15 },
+  { changes: 1, weight: 0.39 },
   { changes: 2, weight: 0.32 },
   { changes: 3, weight: 0.14 },
-  { changes: 4, weight: 0.05 },
 ];
-const SIM_FLIP_POOL = [
-  'speed', 'speed', 'freeze', 'freeze', 'inkjam', 'inkjam', 'missile', 'missile',
-  'mega', 'mega', 'echo', 'echo', 'erase', 'erase', 'convert', 'snap', 'snap',
-  'slow', 'selfFreeze', 'selfInkjam', 'badMissile', 'tiny',
-];
+const SIM_FLIP_BOONS = ['speed', 'freeze', 'inkjam', 'missile', 'mega', 'echo', 'erase'];
+const SIM_FLIP_HAZARDS = ['slow', 'selfFreeze', 'selfInkjam', 'badMissile', 'tiny'];
 const SIM_TOAST_MS = 3400;           // pickup toast linger
 const SIM_ROUND_MS = 120000;         // full rounds on the real length (ROUND_MS)
 const SIM_INTERMISSION_MS = 10000;   // results linger inline (INTERMISSION_MS)
 const SIM_COUNTDOWN_MS = 3000;       // pre-round freeze before the next GO (COUNTDOWN_MS)
 const SIM_ECHO_ID = 'sim-echo';      // synthetic actor/remote key for the ghost twin
-const SIM_BOT_IDS = ['sim-bot-a', 'sim-bot-b', 'sim-bot-c'];   // the three sparring bots
-// Landing bots run the REAL bot AI (see SimBotAI below). Three contrasting
-// personalities are forced (instead of the server's weighted draw) so every
-// visit gets one fierce pickup-racer, one steady sweeper, and one chiller.
-const SIM_BOT_KINDS = ['aggressive', 'balanced', 'casual'];
+const SIM_BOT_IDS = ['sim-bot-a', 'sim-bot-b', 'sim-bot-c', 'sim-bot-d', 'sim-bot-e'];   // up to 5 sparring bots
+// Landing bots run the REAL bot AI (see SimBotAI below). A fierce-leaning spread of
+// personalities is forced (instead of the server's weighted draw), shuffled per round;
+// the first N (for the chosen player count) are used.
+const SIM_BOT_KINDS = ['aggressive', 'balanced', 'casual', 'aggressive', 'balanced'];
 // Rank-bar handles for the bots (a slice of the server's NAME_POOL flavor).
 const SIM_BOT_NAMES = [
   'Riley', 'Nova', 'Pip', 'Zane', 'Cleo', 'Finn', 'Wraith', 'NoScope',
@@ -1954,7 +1985,7 @@ const SIM_PU_INFO = {
   mega:       { name: 'Mega Brush', desc: 'Paints a far wider trail.', bad: false },
   echo:       { name: 'Echo', desc: 'A ghost twin mirrors your moves.', bad: false },
   erase:      { name: 'Erase', desc: 'Rivals erase instead of paint.', bad: false },
-  convert:    { name: 'Recruit', desc: 'Rivals paint your color.', bad: false },
+  mortar:     { name: 'Mortar', desc: 'Rains strikes that erase paint.', bad: true },   // a gamble that can wipe YOUR paint -> hazard-coded (like snap)
   snap:       { name: 'Snap', desc: 'Wipes a random half.', bad: true },   // a gamble that can nuke YOUR paint -> hazard-coded
   slow:       { name: 'Slow', desc: 'You crawl at half speed.', bad: true },
   selfFreeze: { name: 'Self-Freeze', desc: 'Freezes you instead.', bad: true },
@@ -2055,6 +2086,10 @@ function simFillSplatterG(blobs, slot) {
   for (const b of blobs) simFillDiscG(b.x, b.y, b.r, slot);
 }
 
+function simClearSplatterG(blobs) {
+  for (const b of blobs) simClearDiscG(b.x, b.y, b.r);
+}
+
 // Mirror of Room.recomputeCoarse(): summarize the grid into 12x8 zones.
 function simRecomputeCoarse() {
   const room = SIM.room;
@@ -2107,8 +2142,9 @@ const SimBotAI = (() => {
   const BAD_PU_GAMBLE_GREED_EXTRA = 0.032;
   const BAD_PU_GAMBLE_CAP = 0.34;
   const BAD_PU_FLIP_BET = 0.06;
+  const FLIP_BOON_PROB = 0.5;        // flips are a 50/50 boon/hazard coin toss now (config FLIP_*)
+  const FLIP_BET_REF_PROB = 0.7;     // odds the flip-bet was tuned against (old weighted pool)
   const DISRUPT_IDLE_BASE = 0.012;
-  const CONVERT_OBLIVIOUS_BASE = 0.15;
   const REVENGE_SPARK_BASE = 0.018;
   const REVENGE_SPARK_VENGEANCE = 0.15;
   const REVENGE_SPARK_BEHIND = 0.06;
@@ -2222,9 +2258,6 @@ const SimBotAI = (() => {
       disruptTargetId: 0,
       disruptTargetSlot: -1,
       disruptRetargetAt: 0,
-      convertSeen: 0,
-      convertReactAt: 0,
-      convertOblivious: false,
     };
   }
 
@@ -2333,7 +2366,9 @@ const SimBotAI = (() => {
       const far = Math.min(1, dist / ai.noticeR);
       const aliveMs = POWERUP_TTL_MS - (pu.expiresAt - t);
       const overdue = Math.min(1, aliveMs / (POWERUP_TTL_MS * 0.55));
-      chance += BAD_PU_FLIP_BET * (0.35 + 0.65 * Math.max(far, overdue));
+      // Scaled by the new 50/50 flip odds (see config FLIP_*): a rescue flip is far less
+      // likely than when this was tuned, so the bet on a currently-bad icon is worth less.
+      chance += BAD_PU_FLIP_BET * (0.35 + 0.65 * Math.max(far, overdue)) * (FLIP_BOON_PROB / FLIP_BET_REF_PROB);
     }
     return Math.min(chance, BAD_PU_GAMBLE_CAP);
   }
@@ -2660,17 +2695,6 @@ const SimBotAI = (() => {
       if (ai.disruptIdle) { p.mx = 0; p.my = 0; return; }
     }
 
-    const converted = t < p.paintSlotOverrideUntil;
-    if (converted) {
-      if (ai.convertSeen !== p.paintSlotOverrideUntil) {
-        ai.convertSeen = p.paintSlotOverrideUntil;
-        ai.convertReactAt = t + rand(ai.reactMs[0], ai.reactMs[1]) + 120;
-        ai.convertOblivious = Math.random() < CONVERT_OBLIVIOUS_BASE * (0.6 + 0.8 * ai.greed);
-      }
-    } else if (ai.convertSeen) {
-      ai.convertSeen = 0;
-    }
-
     let urgent = false;
     let avoidPU = false;
     const pu = nearestPowerup(room, p, ai.noticeR);
@@ -2695,7 +2719,8 @@ const SimBotAI = (() => {
       if (ai.puVerdict === 'pending') {
         const dist = Math.hypot(pu.x - p.x, pu.y - p.y);
         if (t >= ai.puJudgeAt || dist < BRUSH_R * 8) {
-          const bad = BAD_POWERUPS.has(pu.type) || (pu.type === 'snap' && botIsLeading(room, p));
+          const bad = BAD_POWERUPS.has(pu.type)
+            || ((pu.type === 'snap' || pu.type === 'mortar') && botIsLeading(room, p));
           ai.puVerdict = (!bad || Math.random() < badGrabChance(pu, ai, dist, t)) ? 'go' : 'avoid';
           if (ai.puVerdict === 'avoid') {
             ai.retargetAt = 0;
@@ -2712,11 +2737,6 @@ const SimBotAI = (() => {
       ai.puVerdict = 'go';
       ai.retargetAt = 0;
       ai.disruptRetargetAt = 0;
-    }
-
-    if (converted && !ai.convertOblivious && t >= ai.convertReactAt && !urgent && !disrupted) {
-      p.mx = 0; p.my = 0;
-      return;
     }
 
     if (!urgent) {
@@ -2919,25 +2939,17 @@ function simNextRound(t) {
   me.boost = false; me.slow = false; me.frozen = false; me.noPaint = false; me.erasing = false;
   me.paintScale = 1; me.paintSlot = mySlot; me.castType = null;
   me.lastPaintX = undefined; me.lastPaintY = undefined;
-  const flanks = [
-    { x: G.worldW * (0.18 + Math.random() * 0.12), y: G.worldH * (0.30 + Math.random() * 0.28) },
-    { x: G.worldW * (0.70 + Math.random() * 0.12), y: G.worldH * (0.30 + Math.random() * 0.28) },
-    { x: G.worldW * (0.42 + Math.random() * 0.16), y: G.worldH * (0.12 + Math.random() * 0.12) },
-  ];
-  let flank = 0;
-  for (const a of SIM.players.values()) {
-    const spot = a.id === 'me' ? { x: me.x, y: me.y } : flanks[flank++];
-    a.x = spot.x; a.y = spot.y; a.prevX = spot.x; a.prevY = spot.y;
-    a.vx = 0; a.vy = 0; a.mx = 0; a.my = 0;
-    a.boostUntil = 0; a.slowUntil = 0; a.frozenUntil = 0; a.noPaintUntil = 0; a.erasingUntil = 0;
-    a.brushScale = 1; a.brushScaleUntil = 0;
-    a.paintSlotOverride = -1; a.paintSlotOverrideUntil = 0;
-    a.castType = null; a.castUntil = 0;
-    if (a.ai) {
-      a.ai.targetX = undefined; a.ai.retargetAt = 0; a.ai.thinkUntil = 0;
-      a.ai.puId = null; a.ai.puVerdict = 'go'; a.ai.puReadType = null;
-    }
+  // Reset the SIM 'me' actor in place (the render `me` was reset just above).
+  const meA = SIM.players.get('me');
+  if (meA) {
+    meA.x = me.x; meA.y = me.y; meA.prevX = me.x; meA.prevY = me.y;
+    meA.vx = 0; meA.vy = 0; meA.mx = 0; meA.my = 0;
+    meA.boostUntil = 0; meA.slowUntil = 0; meA.frozenUntil = 0; meA.noPaintUntil = 0; meA.erasingUntil = 0;
+    meA.brushScale = 1; meA.brushScaleUntil = 0;
+    meA.castType = null; meA.castUntil = 0;
   }
+  // Rebuild the bot set fresh so any change to the Players count takes effect this round.
+  simRebuildBots();
   resetTrailAnchors();
   simSyncRenderActors(t);
   scores = new Array(SIM_MAX_PLAYERS).fill(0);
@@ -2996,7 +3008,7 @@ function simTick(dt, t) {
   }
 
   // Your brush: effect flags come off your shared room-actor (a bot's freeze /
-  // ink-jam / erase / recruit lands there too), then the usual client drive.
+  // ink-jam / erase lands there too), then the usual client drive.
   const meA = SIM.players.get('me');
   me.boost = t < meA.boostUntil;
   me.slow = t < meA.slowUntil;
@@ -3005,7 +3017,7 @@ function simTick(dt, t) {
   me.erasing = t < meA.erasingUntil;
   me.paintScale = (t < meA.brushScaleUntil && meA.brushScale > 0) ? meA.brushScale : 1;
   me.castType = t < meA.castUntil ? meA.castType : null;
-  me.paintSlot = (t < meA.paintSlotOverrideUntil && meA.paintSlotOverride >= 0) ? meA.paintSlotOverride : mySlot;
+  me.paintSlot = mySlot;
 
   if (me.frozen) {              // frozen lesson: locked in place
     me.vx = 0; me.vy = 0; me.speed = 0; me.inputActive = false;
@@ -3054,7 +3066,6 @@ function simMakeActor(id, slot, x, y) {
     x, y, vx: 0, vy: 0, mx: 0, my: 0, prevX: x, prevY: y,
     boostUntil: 0, slowUntil: 0, frozenUntil: 0, noPaintUntil: 0, erasingUntil: 0,
     brushScale: 1, brushScaleUntil: 0,
-    paintSlotOverride: -1, paintSlotOverrideUntil: 0,
     castType: null, castUntil: 0,
     echoExpiresAt: 0,
   };
@@ -3070,36 +3081,68 @@ function simMakeRenderEntry(a) {
   };
 }
 
-// The bots: real AI brains in rival colors, ringed around your center spawn
-// (left flank, right flank, top) with the personalities shuffled per visit.
+// Landing player count (you + bots), 2..6, persisted; read at each round stage.
+function simTargetPlayers() {
+  let n = SIM_MAX_PLAYERS;
+  try { if (Store) n = Store.getSim().players; } catch (_) { /* ignore */ }
+  n = Math.round(Number(n) || SIM_MAX_PLAYERS);
+  return Math.max(2, Math.min(SIM_MAX_PLAYERS, n));
+}
+
+function simShuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+  return arr;
+}
+
+// N spawn spots ringed around your center, jittered, clamped inside the arena.
+function simBotSpots(n) {
+  const cx = G.worldW / 2, cy = G.worldH * 0.5;
+  const rx = G.worldW * 0.30, ry = G.worldH * 0.32;
+  const base = Math.random() * Math.PI * 2;
+  const spots = [];
+  for (let i = 0; i < n; i++) {
+    const ang = base + (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+    const x = cx + Math.cos(ang) * rx * (0.82 + Math.random() * 0.34);
+    const y = cy + Math.sin(ang) * ry * (0.82 + Math.random() * 0.34);
+    spots.push({
+      x: Math.max(BRUSH_R * 2, Math.min(G.worldW - BRUSH_R * 2, x)),
+      y: Math.max(BRUSH_R * 2, Math.min(G.worldH - BRUSH_R * 2, y)),
+    });
+  }
+  return spots;
+}
+
+// Remove all sim bots (keeps 'me'); used before a rebuild.
+function simClearBots() {
+  for (const bid of SIM_BOT_IDS) { SIM.players.delete(bid); remote.delete(bid); }
+}
+
+// Rebuild the bot set fresh (count from the Players setting); keeps 'me'.
+function simRebuildBots() {
+  slotNames = {}; slotNames[mySlot] = (Store && Store.getName()) || 'You';
+  simClearBots();
+  simSpawnBots();
+}
+
+// The bots: real AI brains in rival colors, ringed around your center spawn. The count
+// follows the Players setting (you + 1..5 bots); identities/personalities shuffle per round.
 function simSpawnBots() {
-  const open = palette.map((_, s) => s).filter((s) => s !== mySlot);
-  for (let i = open.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = open[i]; open[i] = open[j]; open[j] = tmp;
-  }
-  const kinds = SIM_BOT_KINDS.slice();
-  for (let i = kinds.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = kinds[i]; kinds[i] = kinds[j]; kinds[j] = tmp;
-  }
-  const names = SIM_BOT_NAMES.slice();
-  for (let i = names.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = names[i]; names[i] = names[j]; names[j] = tmp;
-  }
-  const flanks = [
-    { x: G.worldW * (0.18 + Math.random() * 0.12), y: G.worldH * (0.30 + Math.random() * 0.28) },
-    { x: G.worldW * (0.70 + Math.random() * 0.12), y: G.worldH * (0.30 + Math.random() * 0.28) },
-    { x: G.worldW * (0.42 + Math.random() * 0.16), y: G.worldH * (0.12 + Math.random() * 0.12) },
-  ];
-  SIM_BOT_IDS.forEach((bid, i) => {
-    const a = simMakeActor(bid, open[i], flanks[i].x, flanks[i].y);
-    a.ai = SimBotAI.createBotAI(kinds[i]);
-    slotNames[a.slot] = names[i];   // rank-bar handle
+  const n = Math.max(1, Math.min(SIM_BOT_IDS.length, simTargetPlayers() - 1));
+  const open = simShuffle(palette.map((_, s) => s).filter((s) => s !== mySlot));
+  const kinds = simShuffle(SIM_BOT_KINDS.slice());
+  const names = simShuffle(SIM_BOT_NAMES.slice());
+  const spots = simBotSpots(n);
+  for (let i = 0; i < n; i++) {
+    const bid = SIM_BOT_IDS[i];
+    const a = simMakeActor(bid, open[i], spots[i].x, spots[i].y);
+    a.ai = SimBotAI.createBotAI(kinds[i % kinds.length]);
+    slotNames[a.slot] = names[i % names.length];   // rank-bar handle
     SIM.players.set(bid, a);
     remote.set(bid, simMakeRenderEntry(a));
-  });
+  }
 }
 
 // Server stepPlayer(), minus painting (simStampActor) and netcode.
@@ -3145,8 +3188,7 @@ function simStampActor(p, t) {
   if (t < p.erasingUntil) {
     simErasePathG(p.prevX, p.prevY, p.x, p.y, r);
   } else {
-    const slot = (t < p.paintSlotOverrideUntil && p.paintSlotOverride >= 0) ? p.paintSlotOverride : p.slot;
-    simPaintPathG(p.prevX, p.prevY, p.x, p.y, slot, r);
+    simPaintPathG(p.prevX, p.prevY, p.x, p.y, p.slot, r);
   }
 }
 
@@ -3163,7 +3205,7 @@ function simSyncRenderActors(t) {
     r.noPaint = t < a.noPaintUntil;
     r.erasing = t < a.erasingUntil;
     r.paintScale = (t < a.brushScaleUntil && a.brushScale > 0) ? a.brushScale : 1;
-    r.paintSlot = (t < a.paintSlotOverrideUntil && a.paintSlotOverride >= 0) ? a.paintSlotOverride : a.slot;
+    r.paintSlot = a.slot;
     r.castType = t < a.castUntil ? a.castType : null;
     r.inputActive = !!(a.mx || a.my);
     r.speed = Math.hypot(a.vx, a.vy);
@@ -3210,15 +3252,14 @@ function simBagDraw() {
   return SIM.bag.pop();
 }
 
-// Weighted re-roll for mid-life flips (mirror of pickWeightedPowerupType).
+// 50/50 boon-or-hazard re-roll for mid-life flips (mirror of pickFlipType): pick the
+// bucket first, then a type within it -- always a visible change.
 function simFlipType(exclude) {
-  let type = exclude;
-  for (let guard = 0; guard < 8 && type === exclude; guard++) {
-    type = SIM_FLIP_POOL[Math.floor(Math.random() * SIM_FLIP_POOL.length)];
-  }
+  const pool = Math.random() < 0.5 ? SIM_FLIP_BOONS : SIM_FLIP_HAZARDS;
+  let type = pool[Math.floor(Math.random() * pool.length)];
   if (type === exclude) {
-    const alts = SIM_TYPES.filter((tp) => tp !== exclude);
-    type = alts[Math.floor(Math.random() * alts.length)] || exclude;
+    const alts = pool.filter((tp) => tp !== exclude);
+    if (alts.length) type = alts[Math.floor(Math.random() * alts.length)];
   }
   return type;
 }
@@ -3264,18 +3305,21 @@ function simSpawnPoint() {
   }
   const feet = [];
   for (const a of SIM.players.values()) feet.push({ x: a.x, y: a.y });
-  let x = G.worldW / 2;
-  let y = G.worldH / 2;
-  for (let i = 0; i < 40; i++) {
-    x = margin + Math.random() * (G.worldW - 2 * margin);
-    y = margin + Math.random() * (G.worldH - 2 * margin);
-    const fx = x, fy = y;
-    if (feet.some((f) => (f.x - fx) * (f.x - fx) + (f.y - fy) * (f.y - fy) < clearR2)) continue;
+  // Never drop a powerup on a brush. Keep the roomiest (farthest-from-anyone) non-blocked
+  // sample as a fallback so a crowded board (up to 6 players) can't force a point-blank spawn.
+  let best = { x: G.worldW / 2, y: G.worldH / 2 };
+  let bestN2 = -1;
+  for (let i = 0; i < 48; i++) {
+    const x = margin + Math.random() * (G.worldW - 2 * margin);
+    const y = margin + Math.random() * (G.worldH - 2 * margin);
     const cx = ox + x * z, cy = oy + y * z;
     if (blockers.some((r) => cx > r.left - pad && cx < r.right + pad && cy > r.top - pad && cy < r.bottom + pad)) continue;
-    break;
+    let n2 = Infinity;
+    for (const f of feet) { const d2 = (f.x - x) * (f.x - x) + (f.y - y) * (f.y - y); if (d2 < n2) n2 = d2; }
+    if (n2 >= clearR2) return { x, y };                  // clear of every brush -> use it
+    if (n2 > bestN2) { bestN2 = n2; best = { x, y }; }   // else remember the roomiest spot
   }
-  return { x, y };
+  return best;
 }
 
 function simSpawnPowerup(t) {
@@ -3403,18 +3447,18 @@ function simApplyPowerup(p, type, t) {
   } else if (type === 'erase') {
     p.castType = 'erase'; p.castUntil = t + SIM_EFFECT_MS.erase;
     for (const o of rivals) o.erasingUntil = t + SIM_EFFECT_MS.erase;
-  } else if (type === 'convert') {
-    for (const o of rivals) {
-      o.paintSlotOverride = p.slot;
-      o.paintSlotOverrideUntil = t + SIM_EFFECT_MS.convert;
-    }
+  } else if (type === 'mortar') {
+    p.castType = 'missile'; p.castUntil = t + SIM_EFFECT_MS.mortar;
+    simScheduleMissiles(p.slot, t, SIM_MISSILE_COUNT, null, { erase: true, r: SIM_MORTAR_CRATER_R });
   } else if (type === 'snap') {
     simHalfWipe();
   }
 }
 
 // ---- sim missiles (mirror of scheduleMissiles + makePaintSplatter) ----
-function simScheduleMissiles(slot, t, count, around) {
+function simScheduleMissiles(slot, t, count, around, opts = {}) {
+  const erase = !!opts.erase;
+  const r = opts.r || SIM_CRATER_R;
   const m = 60;
   for (let i = 0; i < count; i++) {
     let x, y;
@@ -3427,7 +3471,7 @@ function simScheduleMissiles(slot, t, count, around) {
       x = m + Math.random() * (G.worldW - 2 * m);
       y = m + Math.random() * (G.worldH - 2 * m);
     }
-    SIM.impactQueue.push({ at: t + SIM_MISSILE_DELAY_MS + i * SIM_MISSILE_INTERVAL_MS, x: Math.round(x), y: Math.round(y), slot });
+    SIM.impactQueue.push({ at: t + SIM_MISSILE_DELAY_MS + i * SIM_MISSILE_INTERVAL_MS, x: Math.round(x), y: Math.round(y), slot, erase, r });
   }
 }
 
@@ -3453,10 +3497,16 @@ function simProcessImpacts(t) {
   const remain = [];
   for (const im of SIM.impactQueue) {
     if (t >= im.at) {
-      const blobs = simSplatterBlobs(im.x, im.y, SIM_CRATER_R);
-      simFillSplatterG(blobs, im.slot);     // score grid (the AI sees the craters)
-      drawPaintSplatter(blobs, im.slot);    // visual paint layer
-      impacts.push({ x: im.x, y: im.y, r: SIM_CRATER_R, slot: im.slot, start: nowMs });
+      const r = im.r || SIM_CRATER_R;
+      const blobs = simSplatterBlobs(im.x, im.y, r);
+      if (im.erase) {
+        simClearSplatterG(blobs);           // score grid (the AI sees the holes)
+        erasePaintSplatter(blobs);          // wipe the visual paint layer
+      } else {
+        simFillSplatterG(blobs, im.slot);   // score grid (the AI sees the craters)
+        drawPaintSplatter(blobs, im.slot);  // visual paint layer
+      }
+      impacts.push({ x: im.x, y: im.y, r, slot: im.slot, start: nowMs });
       if (GameAudio) GameAudio.impact();
     } else {
       remain.push(im);
@@ -3505,10 +3555,6 @@ function simSpawnEcho(owner, t) {
   e.echoExpiresAt = t + SIM_EFFECT_MS.echo;
   e.mx = owner.mx;
   e.my = owner.my;
-  if (t < owner.paintSlotOverrideUntil && owner.paintSlotOverride >= 0) {
-    e.paintSlotOverride = owner.paintSlotOverride;
-    e.paintSlotOverrideUntil = owner.paintSlotOverrideUntil;
-  }
   SIM.players.set(SIM_ECHO_ID, e);
   remote.set(SIM_ECHO_ID, simMakeRenderEntry(e));
 }

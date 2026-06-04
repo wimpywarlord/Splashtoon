@@ -55,7 +55,6 @@ const {
   TINY_SPEED_MULT,
   ERASE_MS,
   ECHO_MS,
-  CONVERT_MS,
   SELF_FREEZE_MS,
   SELF_INKJAM_MS,
   MISSILE_COUNT,
@@ -63,9 +62,12 @@ const {
   MISSILE_DELAY_MS,
   MISSILE_INTERVAL_MS,
   CRATER_R,
+  MORTAR_CRATER_R,
   POWERUP_TYPES,
   POWERUP_SPAWN_POOL,
   POWERUP_SWITCH_CHANCES,
+  FLIP_BOON_POOL,
+  FLIP_HAZARD_POOL,
   PALETTE,
   COUNTDOWN_SPAWNS,
   MAX_NAME_LEN,
@@ -92,6 +94,19 @@ function pickWeightedPowerupType(exclude = null) {
   if (type === exclude) {
     const alts = POWERUP_TYPES.filter((t) => t !== exclude);
     type = alts[Math.floor(Math.random() * alts.length)] || exclude;
+  }
+  return type;
+}
+
+// On a flip, re-roll to a 50/50 boon-or-hazard coin toss (see config). Picks the
+// bucket first so the split stays honest, then re-picks within it if it lands on the
+// current type -- a flip always visibly changes the icon.
+function pickFlipType(exclude = null) {
+  const pool = Math.random() < 0.5 ? FLIP_BOON_POOL : FLIP_HAZARD_POOL;
+  let type = pool[Math.floor(Math.random() * pool.length)];
+  if (type === exclude) {
+    const alts = pool.filter((tp) => tp !== exclude);
+    if (alts.length) type = alts[Math.floor(Math.random() * alts.length)];
   }
   return type;
 }
@@ -298,8 +313,6 @@ class Room {
     p.erasingUntil = 0;
     p.brushScaleUntil = 0;
     p.brushScale = 1;
-    p.paintSlotOverride = -1;
-    p.paintSlotOverrideUntil = 0;
     p.castType = null;
     p.castUntil = 0;
     p.prevX = p.x;
@@ -460,8 +473,12 @@ class Room {
     for (const b of blobs) this.fillDisc(b.x, b.y, b.r, slot);
   }
 
-  recordPaintSplatter(blobs, slot) {
-    this.visualPaintEvents.push({ t: 'splatter', slot, blobs });
+  clearSplatter(blobs) {
+    for (const b of blobs) this.clearDisc(b.x, b.y, b.r);
+  }
+
+  recordPaintSplatter(blobs, slot, erase = false) {
+    this.visualPaintEvents.push({ t: 'splatter', slot, blobs, erase });
   }
 
   // ---- simulation -----------------------------------------------------------
@@ -530,16 +547,13 @@ class Room {
     // coalesced by distance so their count doesn't scale with the sim rate.
     const brushR = this.brushRadius(p, t);
     const erasing = t < p.erasingUntil;
-    // "Recruit"/convert: a converted brush lays the CASTER's color (scores for them).
-    const paintSlot = (t < p.paintSlotOverrideUntil && p.paintSlotOverride >= 0)
-      ? p.paintSlotOverride : p.slot;
     if (erasing) this.erasePath(px, py, p.x, p.y, brushR);
-    else this.paintPath(px, py, p.x, p.y, paintSlot, brushR);
+    else this.paintPath(px, py, p.x, p.y, p.slot, brushR);
     if (p.visAnchorX === undefined) { p.visAnchorX = px; p.visAnchorY = py; }
     const vdx = p.x - p.visAnchorX;
     const vdy = p.y - p.visAnchorY;
     if (vdx * vdx + vdy * vdy >= VIS_STROKE_MIN2) {
-      this.recordPaintStroke(p.visAnchorX, p.visAnchorY, p.x, p.y, paintSlot, brushR, erasing);
+      this.recordPaintStroke(p.visAnchorX, p.visAnchorY, p.x, p.y, p.slot, brushR, erasing);
       p.visAnchorX = p.x;
       p.visAnchorY = p.y;
     }
@@ -558,28 +572,29 @@ class Room {
     for (const p of this.players.values()) if (p.slot >= 0 && !p.isEcho) actives.push(p);
     const feetR2 = POWERUP_SPAWN_CLEAR_R * POWERUP_SPAWN_CLEAR_R;
     const contestR2 = POWERUP_SPAWN_CONTEST_R * POWERUP_SPAWN_CONTEST_R;
-    let px = 0, py = 0, lcx = 0, lcy = 0, lsx = 0, lsy = 0, hasClear = false, found = false;
+    let px = 0, py = 0, lcx = 0, lcy = 0, hasClear = false, found = false;
     let c2x = 0, c2y = 0, has2 = false;                   // best 2-player race seen (fallback)
+    let bx = WORLD_W / 2, by = WORLD_H / 2, bestNear = -1; // roomiest sample seen (anti point-blank)
     for (let i = 0; i < POWERUP_SPAWN_TRIES; i++) {
       const x = margin + Math.random() * (WORLD_W - 2 * margin);
       const y = margin + Math.random() * (WORLD_H - 2 * margin);
-      lsx = x; lsy = y;
       let nearest2 = Infinity, contesters = 0;
       for (const p of actives) {
         const dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
         if (d2 < nearest2) nearest2 = d2;
         if (d2 < contestR2) contesters++;
       }
+      if (nearest2 > bestNear) { bestNear = nearest2; bx = x; by = y; }  // farthest-from-anyone so far
       if (nearest2 >= feetR2) {
         lcx = x; lcy = y; hasClear = true;                              // feet-clear (last resort)
         if (contesters >= POWERUP_SPAWN_CONTEST_MIN) { px = x; py = y; found = true; break; }  // ideal scrum
         if (contesters >= 2 && !has2) { c2x = x; c2y = y; has2 = true; } // remember a 2-way race
       }
     }
-    if (!found) {                                          // no full scrum -> 2-way, else feet-clear
+    if (!found) {                                          // no full scrum -> 2-way, feet-clear, else roomiest
       if (has2) { px = c2x; py = c2y; }
       else if (hasClear) { px = lcx; py = lcy; }
-      else { px = lsx; py = lsy; }
+      else { px = bx; py = by; }                           // never the last random sample (could be point-blank)
     }
     const changes = pickPowerupSwitchCount();
     const type = pickWeightedPowerupType();
@@ -598,7 +613,7 @@ class Room {
   updatePowerupSwitches(t) {
     for (const pu of this.powerups) {
       while (pu.switches && pu.switchIndex < pu.switches.length && t >= pu.switches[pu.switchIndex]) {
-        pu.type = pickWeightedPowerupType(pu.type);
+        pu.type = pickFlipType(pu.type);
         pu.switchIndex++;
       }
     }
@@ -633,7 +648,9 @@ class Room {
     return slots;
   }
 
-  scheduleMissiles(slot, t, count = MISSILE_COUNT, around = null) {
+  scheduleMissiles(slot, t, count = MISSILE_COUNT, around = null, opts = {}) {
+    const erase = !!opts.erase;
+    const r = opts.r || CRATER_R;
     const m = 60;
     for (let i = 0; i < count; i++) {
       let x;
@@ -652,6 +669,8 @@ class Room {
         x: Math.round(x),
         y: Math.round(y),
         slot,
+        erase,
+        r,
       });
     }
   }
@@ -698,13 +717,6 @@ class Room {
     echo.brushScaleUntil = owner.brushScaleUntil;
     echo.castType = owner.castType;
     echo.castUntil = owner.castUntil;
-    if (t < owner.paintSlotOverrideUntil && owner.paintSlotOverride >= 0) {
-      echo.paintSlotOverride = owner.paintSlotOverride;
-      echo.paintSlotOverrideUntil = owner.paintSlotOverrideUntil;
-    } else {
-      echo.paintSlotOverride = -1;
-      echo.paintSlotOverrideUntil = 0;
-    }
   }
 
   removeExpiredEchoes(t) {
@@ -773,14 +785,12 @@ class Room {
         if (o.slot < 0 || o.slot === p.slot) continue;
         o.erasingUntil = t + ERASE_MS;
       }
-    } else if (type === 'convert') {
-      // "Recruit": every rival's brush paints the caster's color for a short window,
-      // so their strokes score for the caster. The caster's own brush is unchanged.
-      for (const o of this.players.values()) {
-        if (o.slot < 0 || o.slot === p.slot) continue;
-        o.paintSlotOverride = p.slot;
-        o.paintSlotOverrideUntil = t + CONVERT_MS;
-      }
+    } else if (type === 'mortar') {
+      // "Mortar": an erasing missile shower -- the missile barrage, but craters WIPE paint
+      // instead of laying it. Scattered board-wide, so it strips the leader most.
+      p.castType = 'missile';                          // reuse the firing pose
+      p.castUntil = t + POWERUP_EFFECT_MS;
+      this.scheduleMissiles(p.slot, t, MISSILE_COUNT, null, { erase: true, r: MORTAR_CRATER_R });
     } else if (type === 'snap') {
       this.doHalfWipe(p);
     }
@@ -812,10 +822,17 @@ class Room {
     const remain = [];
     for (const im of this.pendingImpacts) {
       if (t >= im.at) {
-        const blobs = this.makePaintSplatter(im.x, im.y, CRATER_R);
-        this.fillSplatter(blobs, im.slot);
-        this.recordPaintSplatter(blobs, im.slot);
-        this.broadcast({ t: 'impact', x: im.x, y: im.y, slot: im.slot, r: CRATER_R, blobs });
+        const r = im.r || CRATER_R;
+        const blobs = this.makePaintSplatter(im.x, im.y, r);
+        if (im.erase) {
+          this.clearSplatter(blobs);
+          this.recordPaintSplatter(blobs, im.slot, true);     // replay the wipe on join/refresh
+          this.broadcast({ t: 'impact', x: im.x, y: im.y, slot: im.slot, r, blobs, erase: true });
+        } else {
+          this.fillSplatter(blobs, im.slot);
+          this.recordPaintSplatter(blobs, im.slot);
+          this.broadcast({ t: 'impact', x: im.x, y: im.y, slot: im.slot, r, blobs });
+        }
       } else {
         remain.push(im);
       }
@@ -985,8 +1002,6 @@ class Room {
           p.castType = null;
           p.castUntil = 0;
         }
-        const paintSlot = (t < p.paintSlotOverrideUntil && p.paintSlotOverride >= 0)
-          ? p.paintSlotOverride : p.slot;
         out.push({
           id: p.id,
           slot: p.slot,
@@ -999,7 +1014,6 @@ class Room {
           noPaint: t < p.noPaintUntil,
           erasing: t < p.erasingUntil,
           paintScale: this.brushScale(p, t),
-          paintSlot,                    // convert: the slot this brush currently paints AS
           echo: !!p.isEcho,             // render hint: draw the ghost twin translucent
           castType,
           inputActive: !!(p.mx || p.my),

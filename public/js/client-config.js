@@ -58,7 +58,7 @@
         selfInkjam: 9,
         badMissile: 10,
         tiny: 11,
-        convert: 13,   // Recruit = army helmet (col 13 in the sheet)
+        mortar: 13,    // Mortar = army helmet (col 13 in the sheet)
         snap: 12,      // Snap = gauntlet (col 12 in the sheet)
       },
       rows: { active: 0, disabled: 1 },

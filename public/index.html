@@ -35,11 +35,15 @@
          timer, power-up legend (right). Lives on the landing too (the tutorial sim
          feeds it live ranks + the round clock), so it ships visible -- nothing
          flashes or pops at boot. The .topbar-balance pads the gear side to the
-         legend's width so the timer stays truly centered. -->
+         legend's width so the timer stays truly centered. The stats readout floats
+         (out of flow) over the balance, landing only, so that math holds. -->
     <div id="topbar">
       <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
       </button>
+      <!-- Lifetime multiplayer stats (Wins / Streak), filled by
+           renderStats(); empty (so invisible) until a first real match. -->
+      <div id="stats" class="stats" aria-label="Your stats"></div>
       <span class="topbar-balance" aria-hidden="true"></span>
       <div id="rank-left" class="rank-group"></div>
       <div id="timer">
@@ -82,7 +86,6 @@
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 4"></span><span class="legend-name">Mega Brush</span><span class="legend-desc">Paints a far wider trail.</span></div>
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 5"></span><span class="legend-name">Echo</span><span class="legend-desc">A ghost twin mirrors your moves.</span></div>
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 6"></span><span class="legend-name">Erase</span><span class="legend-desc">Rivals erase instead of paint.</span></div>
-      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 13"></span><span class="legend-name">Recruit</span><span class="legend-desc">Rivals paint your color.</span></div>
       <div class="legend-group legend-group-bad">Hazards</div>
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 7"></span><span class="legend-name">Slow</span><span class="legend-desc">You crawl at half speed.</span></div>
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 8"></span><span class="legend-name">Self-Freeze</span><span class="legend-desc">Freezes you instead.</span></div>
@@ -90,6 +93,7 @@
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 10"></span><span class="legend-name">Backfire</span><span class="legend-desc">Rival-colored splats burst from you.</span></div>
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 11"></span><span class="legend-name">Tiny Brush</span><span class="legend-desc">Slim trail, slightly faster.</span></div>
       <div class="legend-row"><span class="pu-avatar" style="--pu-col: 12"></span><span class="legend-name">Snap</span><span class="legend-desc">Wipes a random half.</span></div>
+      <div class="legend-row"><span class="pu-avatar" style="--pu-col: 13"></span><span class="legend-name">Mortar</span><span class="legend-desc">Rains strikes that erase paint.</span></div>
     </div>
 
     <!-- Full-viewport canvas overlay: play area is rendered below the bar, but
@@ -120,6 +124,14 @@
         <span>Brush</span>
         <input id="brush-slider" type="range" min="0" max="100" value="100" />
       </label>
+      <div class="settings-row settings-row-players">
+        <span>Players</span>
+        <div class="stepper">
+          <button id="players-dec" class="stepper-btn" type="button" aria-label="Fewer players">&#9664;</button>
+          <span id="players-val" class="stepper-val" aria-live="polite">6</span>
+          <button id="players-inc" class="stepper-btn" type="button" aria-label="More players">&#9654;</button>
+        </div>
+      </div>
     </div>
 
     <!-- Spectator banner -->
@@ -164,8 +176,7 @@
         <div class="brand">
           <img class="brand-mark" src="/assets/logo-battle-painter.svg" alt="Battle Painter" width="261" height="175" decoding="async" />
         </div>
-        <!-- Stats pill relocated out of the bar; re-add <div id="stats" class="stats"></div>
-             wherever it should live (renderStats() targets #stats; .stats styles are portable). -->
+        <!-- Stats readout lives in the top bar next to the settings gear (landing only). -->
       </div>
       <div class="nav-right">
         <!-- Landing tutorial toast, perched right above the START MULTIPLAYER

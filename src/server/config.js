@@ -89,11 +89,7 @@ const TINY_BRUSH_MS = 5_000;
 const TINY_BRUSH_MULT = 0.55;
 const TINY_SPEED_MULT = 1.25;
 const ERASE_MS = 5_000;
-const ECHO_MS = 7_000;
-// "Recruit": every rival's brush paints YOUR color for this long (their strokes score
-// for you). Short on purpose -- a converted bot mostly stands still to deny the donate
-// (see bot-ai), so this is a brief tactical window, not a runaway swing.
-const CONVERT_MS = 2_000;
+const ECHO_MS = 5_500;   // "clone"/ghost-twin window -- trimmed a bit from 7s
 const SELF_FREEZE_MS = 3_000;
 const SELF_INKJAM_MS = 3_000;
 
@@ -102,6 +98,10 @@ const BAD_MISSILE_COUNT = 12;
 const MISSILE_DELAY_MS = 200;
 const MISSILE_INTERVAL_MS = Math.floor((POWERUP_EFFECT_MS - MISSILE_DELAY_MS) / (MISSILE_COUNT - 1));
 const CRATER_R = 36;
+// "Mortar": an erasing missile shower -- reuses the missile barrage (MISSILE_COUNT strikes
+// + missile timing) but the craters WIPE paint instead of laying it, with a bigger radius
+// so the erase reads. Scattered board-wide, so it strips whoever owns the most (the leader).
+const MORTAR_CRATER_R = 46;
 
 const POWERUP_TYPES = [
   'speed',
@@ -116,7 +116,7 @@ const POWERUP_TYPES = [
   'selfInkjam',
   'badMissile',
   'tiny',
-  'convert',
+  'mortar',
   'snap',
 ];
 // Good powers are intentionally more common than bad powers; bad powers exist to
@@ -129,7 +129,7 @@ const POWERUP_SPAWN_POOL = [
   'mega', 'mega',
   'echo', 'echo',
   'erase', 'erase',
-  'convert',            // strong (rivals paint YOUR color) -> kept rare: single entry
+  'mortar',             // strong board-wide erase shower -> kept rare: single entry
   'snap', 'snap',       // random half-wipe: a chaotic gamble, so normal frequency
   'slow',
   'selfFreeze',
@@ -137,17 +137,21 @@ const POWERUP_SPAWN_POOL = [
   'badMissile',
   'tiny',
 ];
-// Nearly every powerup cycles its type (the "twist"), skewed toward more flips --
-// about half change twice or more, and a few are frantic 3-4x changers. But 2%
-// never flip at all: betting on a bad icon changing before you reach it stays a
-// gamble, never a certainty.
+// Most powerups cycle their type (the "twist") 1-3 times across their life; flips cap at
+// 3 (4+ read as too frantic). 15% never flip at all, so betting on a bad icon changing
+// before you reach it stays a gamble, never a certainty.
 const POWERUP_SWITCH_CHANCES = [
-  { changes: 0, weight: 0.02 },
-  { changes: 1, weight: 0.47 },
+  { changes: 0, weight: 0.15 },
+  { changes: 1, weight: 0.39 },
   { changes: 2, weight: 0.32 },
   { changes: 3, weight: 0.14 },
-  { changes: 4, weight: 0.05 },
 ];
+// On a flip, the type re-rolls to a 50/50 coin toss between a BOON (good for the
+// grabber) and a HAZARD (self-harm), so betting on a bad icon flipping -- or a good
+// one souring -- is a genuine gamble. 'mortar' (kept deliberately rare) and 'snap'
+// (a board-wide wildcard, not a personal good/bad) are spawn-only, never flip targets.
+const FLIP_BOON_POOL = ['speed', 'freeze', 'inkjam', 'missile', 'mega', 'echo', 'erase'];
+const FLIP_HAZARD_POOL = ['slow', 'selfFreeze', 'selfInkjam', 'badMissile', 'tiny'];
 
 // One color per slot (MAX_PLAYERS). These six are the most mutually distinct of
 // the old set -- the dropped pink/blue read too close to red/purple at speed.
@@ -231,7 +235,6 @@ module.exports = {
   TINY_SPEED_MULT,
   ERASE_MS,
   ECHO_MS,
-  CONVERT_MS,
   SELF_FREEZE_MS,
   SELF_INKJAM_MS,
   MISSILE_COUNT,
@@ -239,9 +242,12 @@ module.exports = {
   MISSILE_DELAY_MS,
   MISSILE_INTERVAL_MS,
   CRATER_R,
+  MORTAR_CRATER_R,
   POWERUP_TYPES,
   POWERUP_SPAWN_POOL,
   POWERUP_SWITCH_CHANCES,
+  FLIP_BOON_POOL,
+  FLIP_HAZARD_POOL,
   PALETTE,
   COUNTDOWN_SPAWNS,
   MAX_NAME_LEN,

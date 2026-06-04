@@ -57,20 +57,13 @@ const BAD_PU_GAMBLE_GREED_BASE = 0.020;
 const BAD_PU_GAMBLE_GREED_EXTRA = 0.032;
 const BAD_PU_GAMBLE_CAP = 0.34;
 const BAD_PU_FLIP_BET = 0.06;
+// Flips are a 50/50 boon/hazard coin toss now (see config FLIP_*), not the old weighted
+// pool's ~70% good -- so "it'll flip good before I arrive" is a worse bet. Scale the
+// flip-anticipation gamble by (new odds / the odds it was tuned against) so bots stop
+// over-grabbing currently-bad icons hoping for a rescue flip.
+const FLIP_BOON_PROB = 0.5;
+const FLIP_BET_REF_PROB = 0.7;
 const DISRUPT_IDLE_BASE = 0.012;
-// Converted by "Recruit": chance a bot is oblivious for the whole episode and just paints
-// on for the enemy. Rare -- most read it and stand still after a beat -- and nudged up a
-// little for greedier (more headless) bots.
-const CONVERT_OBLIVIOUS_BASE = 0.15;
-// Not every converted bot halts on the dot: some drift on a beat longer first -- a "wait,
-// that's their color..." double-take -- before settling. Chance per episode (nudged up for
-// greedier bots) and how long that extra roll lasts.
-const CONVERT_DRIFT_CHANCE = 0.54;
-const CONVERT_DRIFT_MS = [140, 380];
-// Every rival converts at the SAME instant, so without a wide per-bot spread they'd all
-// freeze in lockstep -- a "green light, red light" tell. This is the big independent beat
-// that scatters WHEN each one settles, so they peel to a stop raggedly.
-const CONVERT_STAGGER_MS = 650;
 const REVENGE_SPARK_BASE = 0.018;
 const REVENGE_SPARK_VENGEANCE = 0.15;
 const REVENGE_SPARK_BEHIND = 0.06;
@@ -297,10 +290,6 @@ function createBotAI() {
     disruptTargetId: 0,
     disruptTargetSlot: -1,
     disruptRetargetAt: 0,
-    convertSeen: 0,         // paintSlotOverrideUntil of the convert episode reacted to
-    convertReactAt: 0,      // when it first notices (start of the optional double-take drift)
-    convertStopAt: 0,       // when it actually settles to a stop (>= convertReactAt)
-    convertOblivious: false,// rare: doesn't notice, paints on for the enemy
   };
 }
 
@@ -427,7 +416,9 @@ function badGrabChance(pu, ai, dist, t) {
     const far = Math.min(1, dist / ai.noticeR);
     const aliveMs = POWERUP_TTL_MS - (pu.expiresAt - t);
     const overdue = Math.min(1, aliveMs / (POWERUP_TTL_MS * 0.55));
-    chance += BAD_PU_FLIP_BET * (0.35 + 0.65 * Math.max(far, overdue));
+    // Scaled by the new flip odds: a flip lands a boon only ~50% of the time now, so the
+    // "wait for it to flip good" gamble is worth proportionally less than when it was tuned.
+    chance += BAD_PU_FLIP_BET * (0.35 + 0.65 * Math.max(far, overdue)) * (FLIP_BOON_PROB / FLIP_BET_REF_PROB);
   }
   return Math.min(chance, BAD_PU_GAMBLE_CAP);
 }
@@ -799,28 +790,6 @@ function updateBot(p, room, dt, t) {
     if (ai.disruptIdle) { p.mx = 0; p.my = 0; return; }
   }
 
-  // Converted by "Recruit": this bot's brush is painting a rival's color, so moving just
-  // donates paint to them. One read per episode: after a human beat it mostly STANDS
-  // STILL to deny the free paint (resolved below, once powerup interest is known) -- but
-  // rarely it's oblivious and paints on regardless.
-  const converted = t < p.paintSlotOverrideUntil;
-  if (converted) {
-    if (ai.convertSeen !== p.paintSlotOverrideUntil) {
-      ai.convertSeen = p.paintSlotOverrideUntil;
-      ai.convertReactAt = t + rand(ai.reactMs[0], ai.reactMs[1]) + 120;
-      // Settle = reaction + a big independent stagger (breaks the lockstep) + a sometimes
-      // double-take, all drawn per bot -> rivals peel to a stop raggedly, not on one
-      // whistle. Greedier bots double-take more often.
-      const stagger = rand(0, CONVERT_STAGGER_MS);
-      const drift = Math.random() < CONVERT_DRIFT_CHANCE + 0.29 * ai.greed   // 54% (calm) .. 83% (greedy)
-        ? rand(CONVERT_DRIFT_MS[0], CONVERT_DRIFT_MS[1]) : 0;
-      ai.convertStopAt = ai.convertReactAt + stagger + drift;
-      ai.convertOblivious = Math.random() < CONVERT_OBLIVIOUS_BASE * (0.6 + 0.8 * ai.greed);
-    }
-  } else if (ai.convertSeen) {
-    ai.convertSeen = 0;
-  }
-
   // 2. Powerup priority. A bot instinctively leans toward a powerup whose race it
   // can win, then partway there "reads the icon" and forms a verdict: commit, or
   // realise it's bad and peel off. Greedier bots commit longer before judging and
@@ -858,11 +827,11 @@ function updateBot(p, room, dt, t) {
     if (ai.puVerdict === 'pending') {
       const dist = Math.hypot(pu.x - p.x, pu.y - p.y);
       if (t >= ai.puJudgeAt || dist < BRUSH_R * 8) {
-        // 'snap' wipes a random half: great when behind, suicidal when ahead -- so a
-        // clearly-leading bot treats it as bad and peels off; everyone else grabs it
-        // normally. ('convert' is always good -- rivals paint your color -- so it's
-        // never bad here.)
-        const bad = BAD_POWERUPS.has(pu.type) || (pu.type === 'snap' && botIsLeading(room, p));
+        // 'snap' (random half-wipe) and 'mortar' (board-wide erase shower) are great when
+        // behind but suicidal when ahead -- both strip the leader most -- so a clearly-
+        // leading bot treats them as bad and peels off; everyone else grabs them normally.
+        const bad = BAD_POWERUPS.has(pu.type)
+          || ((pu.type === 'snap' || pu.type === 'mortar') && botIsLeading(room, p));
         ai.puVerdict = (!bad || Math.random() < badGrabChance(pu, ai, dist, t)) ? 'go' : 'avoid';
         if (ai.puVerdict === 'avoid') {
           ai.retargetAt = 0;
@@ -882,15 +851,6 @@ function updateBot(p, room, dt, t) {
     ai.puVerdict = 'go';
     ai.retargetAt = 0;
     ai.disruptRetargetAt = 0;
-  }
-
-  // Converted and NOT worth moving for a powerup -> settle to a stand-still: refuse to
-  // donate paint to the converter. It keeps gliding (painting) until convertStopAt -- the
-  // reaction beat plus, sometimes, a double-take drift -- so the halt reads human, not
-  // robotic. Powerup chase (urgent) overrides; disrupted logic governs; oblivious plays on.
-  if (converted && !ai.convertOblivious && t >= ai.convertStopAt && !urgent && !disrupted) {
-    p.mx = 0; p.my = 0;
-    return;
   }
 
   // 3. Territory (only when not chasing a powerup).

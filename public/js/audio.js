@@ -221,11 +221,11 @@
       tone({ type: 'triangle', f0: 1300, f1: 940, dur: 0.08, gain: 0.16 });
       tone({ type: 'triangle', f0: 980, f1: 720, dur: 0.08, gain: 0.12, delay: 0.07 });
       tone({ type: 'triangle', f0: 720, f1: 520, dur: 0.1, gain: 0.09, delay: 0.14 });
-    } else if (type === 'convert') {
-      // "Recruit": a bright rallying call -- rivals fall in under your color.
-      tone({ type: 'sawtooth', f0: 300, f1: 600, dur: 0.18, gain: 0.20 });
-      tone({ type: 'square', f0: 450, f1: 900, dur: 0.16, gain: 0.13, delay: 0.06 });
-      tone({ type: 'triangle', f0: 900, f1: 1380, dur: 0.18, gain: 0.12, delay: 0.12 });
+    } else if (type === 'mortar') {
+      // "Mortar": incoming bombardment -- a falling whistle into a low thud.
+      tone({ type: 'sawtooth', f0: 1300, f1: 240, dur: 0.30, gain: 0.16 });
+      tone({ type: 'sine', f0: 150, f1: 60, dur: 0.26, gain: 0.20, delay: 0.18 });
+      noise({ filter: 'lowpass', freq: 520, dur: 0.20, gain: 0.12, at: t0 + 0.18 });
     } else if (type === 'snap') {
       // The finger-snap transient; the board boom rides on snap() (the wipe event).
       noise({ filter: 'highpass', freq: 3600, dur: 0.04, gain: 0.30, at: t0 });

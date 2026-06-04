@@ -211,7 +211,7 @@ html, body {
   z-index: 2;
   left: 10%;
   right: 10%;
-  bottom: -6%;
+  bottom: 2%;
   height: 34%;
   overflow: hidden;
   border-radius: 50%;
@@ -289,7 +289,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-bottom: 12%;
+  padding-bottom: 4%;
   color: #fff7ee;
   font-family: Impact, "Avenir Next Condensed", "Arial Black", sans-serif;
   font-size: clamp(88px, 22vh, 198px);
@@ -304,7 +304,7 @@ html, body {
     0 0 54px color-mix(in srgb, var(--sc-b) 28%, transparent);
 }
 .sc-stage[data-value="GO!"] .sc-digit {
-  padding-bottom: 12%;
+  padding-bottom: 4%;
   font-size: clamp(88px, 22vh, 198px);
   color: #fff0c9;
   -webkit-text-stroke-width: clamp(5px, 0.8vh, 9px);
@@ -702,6 +702,19 @@ html, body {
    groups: legend(133) - gear(34) - the extra flex gap(8) ≈ 91. Tune if the
    legend button changes size. */
 .topbar-balance { width: 91px; flex: none; }
+/* Lifetime multiplayer stats (Wins / Streak): floats just right of the
+   gear, OUT of the flex flow so the .topbar-balance centering math stays exact.
+   Landing only (body.in-menu) -- in a match the bar stays clean. renderStats()
+   fills it; it stays :empty (so invisible) until a first real match is recorded. */
+#topbar .stats {
+  display: none;
+  position: absolute;
+  left: 48px;                    /* bar padding(10) + gear(30) + flex gap(8) */
+  top: 50%;
+  transform: translateY(-50%);
+}
+body.in-menu #topbar .stats { display: flex; }
+body.in-menu #topbar .stats:empty { display: none; }
 
 .lb-item {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
@@ -736,7 +749,17 @@ html, body {
 #settings-menu.hidden { display: none; }
 .settings-title { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--st-muted-fg); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--st-fg); }
+/* Fixed label column so every slider starts at the same x and spans the same width. */
+.settings-row > span { flex: none; width: 52px; }
 .settings-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--st-primary); cursor: pointer; }
+/* Players stepper -- landing only (a real match is always server-filled to 6). */
+.settings-row-players { display: none; }
+body.in-menu .settings-row-players { display: flex; }
+.stepper { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.stepper-btn { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: rgba(255, 255, 255, 0.08); color: var(--st-fg); font-size: 10px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.stepper-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.stepper-btn:disabled { opacity: 0.3; cursor: default; }
+.stepper-val { min-width: 16px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
 .settings-btn-sm {
   appearance: none; border: 1px solid var(--st-border-strong); background: transparent;
   color: var(--st-fg); font: inherit; font-size: 12px; font-weight: 600;
@@ -1139,6 +1162,8 @@ body.in-menu #bottom-nav { display: flex; }
 }
 
 @media (max-width: 1100px) {
+  /* The sim's rank chips (hugging the timer) reach the stats pill's spot here. */
+  body.in-menu #topbar .stats { display: none; }
   #bottom-nav {
     --landing-control-h: 56px;
     --landing-title-size: 82px;
@@ -1263,57 +1288,35 @@ body.in-menu #bottom-nav { display: flex; }
   }
 }
 
-/* Stats as one connected strip (clearly not buttons): value over a tiny label,
-   centered per cell. A faint top-lit gradient gives the pill depth, and cells are
-   split by inset hairlines that fade out top + bottom (lighter than full rules).
-   Same height/radius as the controls so it sits flush in the toolbar. */
+/* Stats as a bare debug-style readout (think network/FPS overlay): one tiny
+   "WINS n  STREAK n" line, no chrome at all. Floats over the .topbar-balance
+   dead zone, so it never costs the bar width. */
 .stats {
-  display: inline-flex;
-  align-items: stretch;
-  height: var(--st-control-h);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   margin: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.018));
-  border: 1px solid var(--st-border);
-  border-radius: 12px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.28);
-  overflow: hidden;
 }
 .stats:empty { display: none; }
 .stats .stat {
-  position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 0 19px;
-  background: none;
-  border: none;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-/* Inset, top/bottom-faded divider between cells (sits on the leading edge). */
-.stats .stat + .stat::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 1px;
-  background: linear-gradient(180deg, transparent, var(--st-border-strong) 28%, var(--st-border-strong) 72%, transparent);
+  flex-direction: row-reverse;   /* DOM is value,label -- show label left, value right */
+  align-items: baseline;
+  gap: 4px;
 }
 .tabular-nums {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
-.stat-value { font-size: 17px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; color: var(--st-fg); }
+/* Type scale mirrors the leaderboard chips: 13px values (.lb-pct) over 11px
+   muted secondary text (.lb-rank). */
+.stat-value { font-size: 13px; font-weight: 700; line-height: 1.1; color: var(--st-fg); }
 .stat-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  line-height: 1;
+  line-height: 1.1;
   color: color-mix(in srgb, var(--st-muted-fg) 85%, transparent);
 }
 
