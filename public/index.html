@@ -144,6 +144,17 @@
       </div>
     </div>
 
+    <!-- Connection status: ONE surface for every failure mode (can't reach the server /
+         network-blocked, server not responding, dropped+reconnecting, browser unsupported,
+         unexpected error). NOT a modal -- plain readable text centered on the board, so a
+         blocked player gets a reason instead of a silent black screen. Driven by the WS
+         lifecycle in client.js (setConn). -->
+    <div id="conn-overlay" class="conn-text hidden" role="status" aria-live="assertive" aria-label="Connection status">
+      <div id="conn-title" class="conn-text-title"></div>
+      <div id="conn-msg" class="conn-text-msg"></div>
+      <button id="conn-btn" class="conn-text-btn hidden" type="button">Retry</button>
+    </div>
+
     <!-- Winner confetti: fixed full-viewport canvas, OUTSIDE the results modal so
          the landing sim can rain it without showing the modal (matches still pair
          it with the results card exactly as before). -->

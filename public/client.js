@@ -104,6 +104,10 @@ const els = {
   playersVal: document.getElementById('players-val'),
   ping: document.getElementById('ping'),
   pingVal: document.querySelector('#ping .ping-val'),
+  connOverlay: document.getElementById('conn-overlay'),
+  connTitle: document.getElementById('conn-title'),
+  connMsg: document.getElementById('conn-msg'),
+  connBtn: document.getElementById('conn-btn'),
 };
 
 const GameAudio = window.SplashtoonAudio;
@@ -175,20 +179,87 @@ const cam = { zoom: 1, dpr: 1, cssW: 1280, cssH: 720 };
 
 // ---- WebSocket --------------------------------------------------------------
 let ws = null;
+
+// Plain centered text (not a modal) for every connection/runtime failure mode -- the player
+// otherwise just gets a silent black board. Transient states (connecting/dropped) say so with
+// a trailing "…" and auto-clear the instant data arrives; hard states (blocked/stalled/
+// unsupported/error) give a reason + an action. The blocked copy names the real-world cause
+// (firewall/VPN) since that's the #1 culprit for "works for me, black screen for them".
+const CONN_MSG = {
+  connecting:  { title: 'Connecting…', sub: 'Reaching the game server.' },
+  dropped:     { title: 'Connection lost', sub: 'Trying to reconnect…' },
+  blocked:     { title: 'Can’t reach the game', sub: 'Your network may be blocking it — work and school firewalls, and some VPNs, block the real-time connection the game needs. Try a phone hotspot, a different network, or another device.', btn: 'Retry' },
+  stalled:     { title: 'Server not responding', sub: 'Connected, but the game didn’t start — the server may be restarting. Retrying…', btn: 'Retry' },
+  unsupported: { title: 'Live play unavailable', sub: 'This browser doesn’t support WebSockets, which the game needs. Try the latest Chrome, Edge, Firefox, or Safari.' },
+  error:       { title: 'Something went wrong', sub: 'An unexpected error stopped the game.', btn: 'Reload' },
+};
+let connState = 'ok';
+let connFails = 0;            // consecutive failed attempts that never received data
+let connGotData = false;      // did the CURRENT socket ever receive a message
+let connectedOnce = false;    // connected successfully at least once this match
+let connWatchdog = null;      // force-fail a socket that opens/hangs but never sends
+let connGrace = null;         // delay before surfacing a transient state (so a fast (re)connect never flashes)
+let connErrShown = false;     // surface an uncaught same-origin error only once
+
+function setConn(state, detail) {
+  connState = state;
+  const o = els.connOverlay;
+  if (!o) return;
+  if (state === 'ok') { o.classList.add('hidden'); return; }
+  const m = CONN_MSG[state] || CONN_MSG.blocked;
+  if (els.connTitle) els.connTitle.textContent = m.title;
+  if (els.connMsg) els.connMsg.textContent = detail || m.sub;
+  if (els.connBtn) { els.connBtn.textContent = m.btn || ''; els.connBtn.classList.toggle('hidden', !m.btn); }
+  o.classList.remove('hidden');
+}
+function clearConnTimers() { clearTimeout(connWatchdog); clearTimeout(connGrace); connWatchdog = connGrace = null; }
+
 function connect() {
+  if (!('WebSocket' in window)) { setConn('unsupported'); return; }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const params = myName ? `?name=${encodeURIComponent(myName)}` : '';
-  ws = new WebSocket(`${proto}://${location.host}/${params}`);
+  connGotData = false;
+  let opened = false;
+  try {
+    ws = new WebSocket(`${proto}://${location.host}/${params}`);
+  } catch (_) { onConnClose(false); return; }
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
-  ws.onopen = startPing;
-  // Reconnect only while in a match; the menu has no connection at all.
-  ws.onclose = () => { ws = null; stopPing(); hidePing(); if (!inMenu) setTimeout(connect, 1000); };
+  ws.onopen = () => { opened = true; startPing(); };
+  ws.onerror = () => {};                          // an error is always followed by close; act there
+  ws.onclose = () => { ws = null; stopPing(); hidePing(); clearTimeout(connWatchdog); onConnClose(opened); };
+  // Some proxies accept the upgrade then hang silently -> drop a socket that sends no data in 8s.
+  connWatchdog = setTimeout(() => { if (!connGotData && ws) { try { ws.close(); } catch (_) {} } }, 8000);
+  // Only surface a transient state if the (re)connect is actually slow (avoid flashing on blips).
+  clearTimeout(connGrace);
+  connGrace = setTimeout(() => { if (!connGotData) setConn(connectedOnce ? 'dropped' : 'connecting'); }, 2500);
+}
+
+// Reconnect with backoff-ish retry; the right failure message depends on how far we got.
+function onConnClose(opened) {
+  clearTimeout(connGrace);
+  if (inMenu) return;                             // left to the menu -> no error, no retry
+  if (connGotData) {                              // the live socket dropped mid-session
+    connFails = 0;
+    setConn('dropped');
+  } else if (connectedOnce) {
+    // We connected earlier this session, so the network clearly allows WebSockets -- a
+    // lost reconnect is the server (restart/crash) or a transient blip, NEVER a firewall.
+    // Keep the honest "reconnecting" copy instead of falsely blaming their network.
+    setConn('dropped');
+  } else {
+    connFails++;                                  // never got in: opened-but-silent = stalled, never-opened = blocked
+    if (connFails >= 2) setConn(opened ? 'stalled' : 'blocked');
+  }
+  setTimeout(connect, 1200);                       // keep retrying; the first message clears the overlay
 }
 
 function disconnect() {
+  clearConnTimers();
   if (ws) { try { ws.onclose = null; ws.close(); } catch (_) { /* ignore */ } ws = null; }
   stopPing();
   hidePing();
+  setConn('ok');
+  connFails = 0; connGotData = false; connectedOnce = false;
   remote.clear();
   me.has = false;
   spectating = true;
@@ -199,6 +270,26 @@ function disconnect() {
   powerups = [];
   clearRankBar();
 }
+
+// Retry/Reload button on the overlay.
+if (els.connBtn) els.connBtn.addEventListener('click', () => {
+  if (connState === 'error') { location.reload(); return; }
+  connFails = 0;
+  setConn('connecting');
+  if (ws) { try { ws.onclose = null; ws.close(); } catch (_) {} ws = null; }
+  stopPing();
+  connect();
+});
+
+// Last resort: an uncaught error in OUR code (same-origin only, shown once) surfaces a
+// message + Reload instead of a frozen/black screen. Cross-origin/extension/3rd-party
+// script errors (no same-origin filename) are ignored to avoid false alarms.
+window.addEventListener('error', (e) => {
+  if (connErrShown || !e || !e.message) return;   // resource-load errors have no .message
+  if ((e.filename || '').indexOf(location.origin) !== 0) return;
+  connErrShown = true;
+  setConn('error', e.message);
+});
 
 function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
@@ -252,6 +343,8 @@ function hidePing() {
 }
 
 function handle(msg) {
+  // Any message means the socket is alive -> clear the connection overlay + failure count.
+  if (!connGotData) { connGotData = true; connectedOnce = true; connFails = 0; clearConnTimers(); setConn('ok'); }
   if (msg.roundMs != null) roundMs = msg.roundMs;   // round length for the pre-round clock
   switch (msg.t) {
     case 'pong': { onPong(msg.id); break; }
