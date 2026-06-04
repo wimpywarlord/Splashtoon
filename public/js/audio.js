@@ -162,7 +162,8 @@
   // Music bus level after the user's category volume. duck() ramps back to this.
   function musicBase() { return MUSIC_MIX * musicVol; }
 
-  // Briefly duck the music (sidechain feel) under a big event.
+  // Briefly duck the music (sidechain) so the effect cuts through -- called by EVERY game
+  // sound, so the Tron bed always sits under the SFX instead of fighting them.
   function duck(amount, hold) {
     if (!ctx || !musicGain) return;
     const t = now();
@@ -177,6 +178,7 @@
   function pickup(type) {
     if (!ctx || !claimVoice(0.5)) return;
     const t0 = now();
+    duck(0.55, 0.3);          // every pickup ducks the bed so the cue reads clearly
     if (type === 'speed') {
       tone({ type: 'triangle', f0: 520, f1: 980, dur: 0.16, gain: 0.32 });
       tone({ type: 'triangle', f0: 780, f1: 1460, dur: 0.14, gain: 0.18, delay: 0.05 });
@@ -216,7 +218,6 @@
       noise({ filter: 'highpass', freq: 1800, dur: 0.08, gain: 0.22, at: t0 });
       tone({ type: 'square', f0: 620, f1: 110, dur: 0.24, gain: 0.16, delay: 0.02 });
       noise({ filter: 'lowpass', freq: 420, dur: 0.24, gain: 0.18, at: t0 + 0.05 });
-      duck(0.18, 0.24);
     } else if (type === 'tiny') {
       tone({ type: 'triangle', f0: 1300, f1: 940, dur: 0.08, gain: 0.16 });
       tone({ type: 'triangle', f0: 980, f1: 720, dur: 0.08, gain: 0.12, delay: 0.07 });
@@ -239,7 +240,7 @@
     if (!ctx || !claimVoice(0.4)) return;
     tone({ type: 'sine', f0: 180, f1: 42, dur: 0.28, gain: 0.5 });
     noise({ filter: 'lowpass', freq: 900, q: 1, dur: 0.2, gain: 0.4 });
-    duck(0.5, 0.35);
+    duck(0.7, 0.35);
   }
 
   // "Snap" half-wipe: a finger-snap crack into a white-noise sweep and a deep boom --
@@ -251,12 +252,13 @@
     noise({ filter: 'bandpass', freq: 1400, q: 0.5, dur: 0.18, gain: 0.30, at: t0 });   // white sweep
     tone({ type: 'sine', f0: 150, f1: 40, dur: 0.36, gain: 0.42 });                     // boom
     noise({ filter: 'lowpass', freq: 200, dur: 0.5, gain: 0.24, at: t0 + 0.03 });       // rumble
-    duck(0.45, 0.4);
+    duck(0.7, 0.4);
   }
 
   // secondsLeft: 10..1 rising ticks; a brighter beep at 0.
   function tick(secondsLeft) {
     if (!ctx || !claimVoice(0.2)) return;
+    duck(0.4, 0.16);
     if (secondsLeft <= 0) {
       tone({ type: 'square', f0: 880, dur: 0.34, gain: 0.3 });
       return;
@@ -267,7 +269,7 @@
 
   function roundEnd(win) {
     if (!ctx) return;
-    duck(0.6, 1.2);
+    duck(0.7, 1.2);
     const t = now();
     if (win) {
       const notes = [523.25, 659.25, 783.99, 1046.5];   // C major arpeggio up
@@ -280,6 +282,7 @@
 
   function spawn() {
     if (!ctx || !claimVoice(0.3)) return;
+    duck(0.45, 0.24);
     tone({ type: 'triangle', f0: 300, f1: 620, dur: 0.2, gain: 0.26 });
   }
 
@@ -296,7 +299,7 @@
     noise({ filter: 'lowpass', freq: 120, dur: 0.9, gain: 0.28, at: t0 + 0.10 });        // deep roll
     noise({ filter: 'lowpass', freq: 70, dur: 1.0, gain: 0.20, at: t0 + 0.16 });         // sub rumble
     tone({ type: 'sine', f0: 90, f1: 50, dur: 0.7, gain: 0.15, delay: 0.05 });           // body boom
-    duck(0.3, 0.55);
+    duck(0.6, 0.55);
   }
 
   // ---- pre-round countdown (synthesized 3-2-1-GO) ---------------------------
@@ -307,6 +310,7 @@
   function countdown() {
     if (!ctx || muted) return;
     const t0 = now();
+    duck(0.45, 3.4);          // hold the bed under the whole 3-2-1, swelling back by GO
     const beep = (at, f) => {
       tone({ type: 'square',   f0: f,     dur: 0.15, gain: 0.26, at, attack: 0.004 });
       tone({ type: 'triangle', f0: f / 2, dur: 0.16, gain: 0.12, at });            // body
