@@ -228,5 +228,8 @@
   <script src="/js/store.js"></script>
   <script src="/js/audio.js"></script>
   <script src="/client.js"></script>
+  <!-- Cloudflare Web Analytics: cookieless, deferred so it runs after parse and never
+       competes with the game loop or WebSocket. -->
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "fbe12aa001bb4d76ac4c75a8c2731bdb"}'></script>
 </body>
 </html>
