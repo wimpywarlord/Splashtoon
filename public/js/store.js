@@ -10,6 +10,13 @@
   const KEY_AUDIO = NS + '.audio';
   const KEY_SIM = NS + '.sim';
   const KEY_PREFS = NS + '.prefs';
+  const KEY_SKIN = NS + '.skin';
+
+  // Cosmetic brush skin ids. Kept in lockstep with SKINS in client.js (and the
+  // server's allowlist); duplicated here so the standalone store can validate a
+  // persisted value without importing the registry.
+  const SKIN_IDS = ['default', 'unicorn', 'hela'];
+  const DEFAULT_SKIN = 'default';
 
   function readJSON(key, fallback) {
     try {
@@ -98,5 +105,17 @@
     writeJSON(KEY_PREFS, Object.assign(getPrefs(), patch));
   }
 
-  global.SplashtoonStore = { getName, setName, getStats, recordResult, getAudio, setAudio, getSim, setSim, getPrefs, setPrefs };
+  function getSkin() {
+    try {
+      const v = localStorage.getItem(KEY_SKIN);
+      return SKIN_IDS.includes(v) ? v : DEFAULT_SKIN;
+    } catch (_) { return DEFAULT_SKIN; }
+  }
+  function setSkin(id) {
+    const v = SKIN_IDS.includes(id) ? id : DEFAULT_SKIN;
+    try { localStorage.setItem(KEY_SKIN, v); } catch (_) { /* ignore */ }
+    return v;
+  }
+
+  global.SplashtoonStore = { getName, setName, getStats, recordResult, getAudio, setAudio, getSim, setSim, getPrefs, setPrefs, getSkin, setSkin };
 })(window);

@@ -110,6 +110,17 @@
     <!-- Settings dropdown (anchored under the gear; expandable over time) -->
     <div id="settings-menu" class="hidden">
       <div class="settings-title">Settings</div>
+      <div class="settings-row settings-row-skin">
+        <span>Skin</span>
+        <div class="stepper stepper-skin">
+          <button id="skin-prev" class="stepper-btn" type="button" aria-label="Previous skin">&#9664;</button>
+          <span id="skin-val" class="stepper-val stepper-val-skin" aria-live="polite">
+            <span id="skin-swatch" class="skin-swatch" aria-hidden="true"></span>
+            <span id="skin-label">Classic</span>
+          </span>
+          <button id="skin-next" class="stepper-btn" type="button" aria-label="Next skin">&#9654;</button>
+        </div>
+      </div>
       <label class="settings-row">
         <span>Master</span>
         <input id="vol-slider" type="range" min="0" max="100" value="70" />

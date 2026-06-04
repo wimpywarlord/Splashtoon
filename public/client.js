@@ -31,14 +31,174 @@ const {
   SNAP_FLASH_MS,
 } = window.Splashtoon.config;
 
-// Animated brush-spirit spritesheet: 8 cols x 9 rows, 192x208 cells. Rows are
-// game-specific brush/powerup interaction states. The pink paint is recolored
-// to each player's color at load.
-const petSheet = new Image();
-let petReady = false;
-petSheet.onload = () => { petReady = true; };
-petSheet.src = '/assets/brush-spirit.png';
-const tintedSheets = {};       // slot -> recolored <canvas>
+// Animated brush-spirit spritesheets: 8 cols x 9 rows, 192x208 cells. Rows are
+// game-specific brush/powerup interaction states. Every skin shares that geometry
+// and keeps a magenta "paint" blob that gets recolored at load (see getTintedSheet).
+//
+// Skins are a NETWORKED cosmetic: the chosen id rides in the roster (player.skin),
+// so every client renders a given player's brush + paint identically. The paint
+// recipe per skin:
+//   'slot'    -> recolor the blob to the player's slot hue; trail = slot color (classic)
+//   'rainbow' -> iridescent rainbow keyed to world position (unicorn)
+//   'emerald' -> necrotic jewel emerald, distinct from the spring-green slot (hela)
+const SKINS = {
+  default: { id: 'default', label: 'Classic', sheet: '/assets/brush-spirit.png',                     paint: 'slot' },
+  unicorn: { id: 'unicorn', label: 'Uni',     sheet: '/assets/brush-spirit-unicorn-final.png',       paint: 'rainbow' },
+  hela:    { id: 'hela',    label: 'Hela',    sheet: '/assets/brush-spirit-hela-black-crown-v2.png', paint: 'emerald' },
+};
+const SKIN_ORDER = ['default', 'unicorn', 'hela'];   // left/right cycle order in settings
+const DEFAULT_SKIN = 'default';
+function skinDef(id) { return SKINS[id] || SKINS[DEFAULT_SKIN]; }
+function skinPaint(id) { return skinDef(id).paint; }
+
+// Skins are a LOCAL cosmetic overlay: only YOUR own brush + paint show your chosen
+// skin. Everyone else always renders in their plain slot color, so nothing has to
+// be networked -- the skin lives entirely client-side (localStorage + this lookup).
+function skinForSlot(slot) {
+  return slot === mySlot ? mySkin : DEFAULT_SKIN;
+}
+
+// Your skin colors the rest of YOUR identity coding too (chat name, leaderboard
+// swatch, brush glow), so switching skins updates the whole UI to match -- not just
+// the board paint. A pattern collapses to a single "ink" color for text/canvas and
+// a gradient swatch for backgrounds; everyone else keeps their flat slot color.
+const SKIN_INK = { unicorn: '#ff5db1', hela: '#10b981' };   // single-color stand-in for a pattern
+const SKIN_SWATCH_CSS = {
+  unicorn: 'linear-gradient(90deg,#ff5d8f,#ffb14e,#ffe05d,#4dffa1,#4dd2ff,#a06bff)',
+  hela: 'linear-gradient(135deg,#0a3d2e,#10b981 72%)',
+};
+function skinInkCss(slot) {
+  return SKIN_INK[skinForSlot(slot)] || palette[slot] || '#fff';
+}
+function skinSwatchCss(slot) {
+  return SKIN_SWATCH_CSS[skinForSlot(slot)] || palette[slot] || '#fff';
+}
+
+// --- Skin paint patterns -----------------------------------------------------
+// Skinned paint reads as a TEXTURE, not a flat fill: each custom skin paints with a
+// repeating CanvasPattern. Tiles are seamless and tile in world space (the paint
+// layer's transform is constant), so the texture stays continuous across separate
+// strokes/blobs and reproduces exactly when a refresh replays the board.
+const PAINT_PATTERNS = {};   // skin id -> CanvasPattern (built lazily once paintCtx exists)
+
+function hslCss(h, s, l, a) {
+  const [r, g, b] = hslToRgb(((h % 360) + 360) % 360, s, l);
+  return a == null ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${a})`;
+}
+
+function drawStar(g, x, y, s) {   // small 4-point sparkle
+  g.save();
+  g.translate(x, y);
+  g.beginPath();
+  g.moveTo(0, -s * 2); g.lineTo(s * 0.45, -s * 0.45); g.lineTo(s * 2, 0); g.lineTo(s * 0.45, s * 0.45);
+  g.lineTo(0, s * 2); g.lineTo(-s * 0.45, s * 0.45); g.lineTo(-s * 2, 0); g.lineTo(-s * 0.45, -s * 0.45);
+  g.closePath(); g.fill();
+  g.restore();
+}
+
+function buildUnicornTile() {
+  const T = 96;
+  const c = document.createElement('canvas');
+  c.width = c.height = T;
+  const g = c.getContext('2d');
+  const img = g.createImageData(T, T);
+  const d = img.data;
+  for (let py = 0; py < T; py++) {
+    for (let px = 0; px < T; px++) {
+      const hue = (((px + py) / T) * 360) % 360;        // seamless diagonal rainbow (period T on x+y)
+      const [r, gg, b] = hslToRgb(hue, 0.92, 0.62);     // vivid iridescent rainbow
+      const i = (py * T + px) * 4;
+      d[i] = r; d[i + 1] = gg; d[i + 2] = b; d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  g.fillStyle = 'rgba(255,255,255,0.95)';               // dense fixed sparkles across the tile
+  for (const [sx, sy, s] of [
+    [12, 10, 2.5], [32, 7, 1.7], [52, 13, 2.2], [72, 8, 1.9], [88, 18, 2.3],
+    [20, 27, 1.8], [40, 24, 2.8], [60, 31, 1.8], [80, 36, 2.2], [9, 40, 1.9],
+    [28, 46, 2.3], [50, 43, 1.7], [70, 50, 2.5], [90, 52, 1.8], [16, 60, 2.1],
+    [38, 66, 2.6], [58, 62, 1.9], [82, 70, 2.3], [12, 82, 1.9], [34, 86, 2.4],
+    [54, 80, 2.0], [74, 88, 2.2], [46, 56, 1.7], [24, 14, 1.6], [66, 22, 1.7],
+    [6, 70, 1.6], [62, 74, 1.6], [30, 60, 1.6], [86, 84, 1.7], [44, 92, 1.6],
+  ]) drawStar(g, sx, sy, s);
+  return c;
+}
+
+// Hela paints a snake-scale trail: rows of overlapping emerald scales (offset every
+// other row, each with a bright-top -> dark-bottom gradient + dark rim). T is a
+// multiple of the column step AND of 2x the row step, so the offset rows line up
+// across the repeat -> seamless. Drawn top-to-bottom so each row laps the one above,
+// leaving only the rounded scale tops visible -- reptilian skin.
+function buildHelaTile() {
+  const T = 48, colW = 16, rowH = 8, r = 11, hue = 163;
+  const c = document.createElement('canvas');
+  c.width = c.height = T;
+  const g = c.getContext('2d');
+  g.fillStyle = hslCss(hue, 0.90, 0.055);               // near-black emerald gaps
+  g.fillRect(0, 0, T, T);
+  g.strokeStyle = hslCss(hue, 0.94, 0.04);              // dark scale rim
+  g.lineWidth = 1.2;
+  for (let row = -1; row * rowH <= T + r; row++) {
+    const cy = row * rowH;
+    const offset = ((row % 2) + 2) % 2 ? colW / 2 : 0;  // brick-lay alternate rows
+    // Deep jewel-emerald body (matches the brush blob shade) with a near-WHITE scale
+    // crown, so the snake skin reads dark + glinty and never blurs into the bright
+    // spring-green slot.
+    const grad = g.createLinearGradient(0, cy - r, 0, cy + r);
+    grad.addColorStop(0, hslCss(hue, 0.32, 0.90));      // white-emerald crown highlight
+    grad.addColorStop(0.28, hslCss(hue, 0.68, 0.48));   // light emerald
+    grad.addColorStop(0.58, hslCss(hue, 0.88, 0.23));   // deep emerald body (darker)
+    grad.addColorStop(1, hslCss(hue, 0.94, 0.08));      // shadowed underlap
+    g.fillStyle = grad;
+    for (let col = -1; col * colW <= T + r; col++) {
+      const cx = col * colW + offset;
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); g.stroke();
+    }
+  }
+  return c;
+}
+
+function paintPattern(skinId) {
+  if (PAINT_PATTERNS[skinId]) return PAINT_PATTERNS[skinId];
+  if (!paintCtx) return null;                            // need a context to mint the pattern
+  let tile = null;
+  if (skinId === 'unicorn') tile = buildUnicornTile();
+  else if (skinId === 'hela') tile = buildHelaTile();
+  if (!tile) return null;
+  const pat = paintCtx.createPattern(tile, 'repeat');
+  PAINT_PATTERNS[skinId] = pat;
+  return pat;
+}
+
+// Paint style for a slot: a flat slot color for the classic skin (and for everyone
+// who isn't the local player), or the local player's skin texture pattern.
+function paintStyleFor(slot) {
+  const skin = skinForSlot(slot);
+  if (skinPaint(skin) !== 'slot') {
+    const pat = paintPattern(skin);
+    if (pat) return pat;
+  }
+  return palette[slot] || '#fff';
+}
+
+// One <Image> per skin, loaded on first use (and warmed at startup below), then
+// tinted + cached. A skin whose sheet hasn't loaded yet draws nothing rather than
+// a placeholder (AGENTS.md: skip missing art, never substitute).
+const skinSheets = {};   // id -> { img, ready }
+function skinSheet(id) {
+  let s = skinSheets[id];
+  if (!s) {
+    const img = new Image();
+    s = { img, ready: false };
+    img.onload = () => { s.ready = true; };
+    img.src = skinDef(id).sheet;
+    skinSheets[id] = s;
+  }
+  return s;
+}
+SKIN_ORDER.forEach(skinSheet);   // warm all sheets so the common ones are ready early
+
+const tintedSheets = {};       // cacheKey -> recolored <canvas>
 let snapshotStamps = [];       // slot -> small rounded cell stamp for grid snapshots
 
 // Runtime uses the active row for board pickups and the disabled gray row for
@@ -102,6 +262,10 @@ const els = {
   playersDec: document.getElementById('players-dec'),
   playersInc: document.getElementById('players-inc'),
   playersVal: document.getElementById('players-val'),
+  skinPrev: document.getElementById('skin-prev'),
+  skinNext: document.getElementById('skin-next'),
+  skinLabel: document.getElementById('skin-label'),
+  skinSwatch: document.getElementById('skin-swatch'),
   ping: document.getElementById('ping'),
   pingVal: document.querySelector('#ping .ping-val'),
   connOverlay: document.getElementById('conn-overlay'),
@@ -146,6 +310,7 @@ let timeLeftMs = roundMs;   // pre-connection fallback: show the full round, not
 let scores = [];
 
 let myName = '';
+let mySkin = (Store && Store.getSkin && Store.getSkin()) || DEFAULT_SKIN;   // selected brush skin (localStorage)
 let slotNames = {};       // slot -> display name, rebuilt from each player list
 let inMenu = true;        // on the start screen (not connected to a match)
 let lastTickSecond = -1;  // for one-shot countdown ticks
@@ -575,12 +740,23 @@ function makeSnapshotStamps() {
 }
 
 function drawSnapshotCell(slot, idx) {
-  const img = snapshotStamps[slot];
-  if (!img) return;
   const cx = idx % G.w;
   const cy = (idx - cx) / G.w;
   const wx = cx * G.cell + G.cell / 2;
   const wy = cy * G.cell + G.cell / 2;
+  // A skinned slot can't use the flat per-slot stamp (its paint is a texture
+  // pattern), so stamp a textured dot via paintStyleFor instead. This is only the
+  // coarse-grid fallback; the normal path is replayPaintEvents.
+  if (skinPaint(skinForSlot(slot)) !== 'slot') {
+    const r = SNAPSHOT_STAMP_PX / 2;
+    paintCtx.fillStyle = paintStyleFor(slot);
+    paintCtx.beginPath();
+    paintCtx.arc(wx, wy, r, 0, Math.PI * 2);
+    paintCtx.fill();
+    return;
+  }
+  const img = snapshotStamps[slot];
+  if (!img) return;
   paintCtx.drawImage(img, wx - SNAPSHOT_STAMP_PX / 2, wy - SNAPSHOT_STAMP_PX / 2);
 }
 
@@ -589,7 +765,6 @@ function replayPaintEvents(events) {
   paintCtx.lineJoin = 'round';
   for (const ev of events) {
     const slot = ev.slot;
-    const col = palette[slot] || '#fff';
     if (ev.t === 'stroke') {
       const w = Number.isFinite(ev.w) ? ev.w : TRAIL_W;
       if (ev.erase) {
@@ -597,7 +772,9 @@ function replayPaintEvents(events) {
         paintCtx.globalCompositeOperation = 'destination-out';
         paintCtx.strokeStyle = 'rgba(0,0,0,1)';
       } else {
-        paintCtx.strokeStyle = col;
+        // Skin-aware: a flat slot color or a repeating texture pattern (which tiles in
+        // world space, so a replayed board matches what was laid live, seam for seam).
+        paintCtx.strokeStyle = paintStyleFor(slot);
       }
       paintCtx.lineWidth = w;
       paintCtx.beginPath();
@@ -624,7 +801,7 @@ function jitter(seed) {
 function drawPaintBlob(x, y, r, slot, seed) {
   if (!paintCtx || !palette[slot] || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(r)) return;
   const points = Math.max(7, Math.min(13, Math.round(r / 2.8) + 4));
-  paintCtx.fillStyle = palette[slot];
+  paintCtx.fillStyle = paintStyleFor(slot);
   paintCtx.beginPath();
   for (let i = 0; i < points; i++) {
     const a = (i / points) * Math.PI * 2;
@@ -739,7 +916,9 @@ function strokeSeg(b, slot, cx, cy) {
       paintCtx.globalCompositeOperation = 'destination-out';
       paintCtx.strokeStyle = 'rgba(0,0,0,1)';
     } else {
-      paintCtx.strokeStyle = palette[slot] || '#fff';
+      // Skin-aware trail: flat slot color or a repeating texture pattern (tiles in
+      // world space, so a replay reproduces the same texture under the same stroke).
+      paintCtx.strokeStyle = paintStyleFor(slot);
     }
     paintCtx.lineWidth = w;
     paintCtx.beginPath();
@@ -872,8 +1051,9 @@ function onChat(msg) {
   const name = document.createElement('span');
   name.className = 'chat-name';
   const slot = Number.isInteger(msg.slot) ? msg.slot : -1;
-  // Spectators chat with slot -1 -> neutral; seated players get their paint color.
-  name.style.color = slot >= 0 && palette[slot] ? palette[slot] : 'var(--st-muted-fg)';
+  // Spectators chat with slot -1 -> neutral; seated players get their paint color
+  // (your own messages pick up your skin's ink so your name matches your brush).
+  name.style.color = slot >= 0 && palette[slot] ? skinInkCss(slot) : 'var(--st-muted-fg)';
   name.textContent = String(msg.name || '');
   const text = document.createElement('span');
   text.textContent = String(msg.text || '');   // textContent: no markup path, ever
@@ -1043,32 +1223,60 @@ function hslToRgb(h, s, l) {
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
 }
 
-// Recolor the brush's pink "paint" pixels to the player's hue (lazy + cached).
-function getTintedSheet(slot) {
-  if (tintedSheets[slot]) return tintedSheets[slot];
-  if (!petReady || !paletteRGB[slot]) return null;
-  const [targetHue, targetSat, targetL] = rgbToHsl(paletteRGB[slot][0], paletteRGB[slot][1], paletteRGB[slot][2]);
+// Recolor a skin's magenta "paint" pixels (lazy + cached). For the classic skin the
+// blob takes the player's slot hue; unicorn paints an iridescent rainbow across it;
+// hela a necrotic emerald. The cache key folds the slot in only for the slot-tinted
+// classic skin -- the custom paints are slot-independent, so all six slots share one.
+function getTintedSheet(skinId, slot) {
+  const def = skinDef(skinId);
+  const key = def.paint === 'slot' ? `slot:${slot}` : def.id;
+  if (tintedSheets[key]) return tintedSheets[key];
+  const sheet = skinSheet(def.id);
+  if (!sheet.ready) return null;
+  if (def.paint === 'slot' && !paletteRGB[slot]) return null;
+
+  let targetHue = 0, targetSat = 0, targetL = 0;
+  if (def.paint === 'slot') {
+    [targetHue, targetSat, targetL] = rgbToHsl(paletteRGB[slot][0], paletteRGB[slot][1], paletteRGB[slot][2]);
+  }
+
   const c = document.createElement('canvas');
-  c.width = petSheet.naturalWidth; c.height = petSheet.naturalHeight;
+  c.width = sheet.img.naturalWidth; c.height = sheet.img.naturalHeight;
   const g = c.getContext('2d');
-  g.drawImage(petSheet, 0, 0);
+  g.drawImage(sheet.img, 0, 0);
   const img = g.getImageData(0, 0, c.width, c.height);
   const d = img.data;
+  const W = c.width;
   for (let i = 0; i < d.length; i += 4) {
     if (d[i + 3] < 8) continue;
     const [h, s, l] = rgbToHsl(d[i], d[i + 1], d[i + 2]);
-    if (s > 0.22 && h >= 285 && h <= 355) {   // pink/magenta paint -> player hue
-      // Pure hue-swap leaves the source pink's saturation/lightness, which washes
-      // out bright targets (yellow) and lets warm ones blend into the brush handle.
-      // Bias saturation toward the target and temper highlights so every hue reads.
-      const ns = Math.min(1, s * 0.45 + targetSat * 0.6);
-      const nl = l > 0.5 ? 0.5 + (l - 0.5) * (1 - 0.45 * targetL) : l;
-      const [nr, ng, nb] = hslToRgb(targetHue, ns, nl);
+    if (s > 0.22 && h >= 285 && h <= 355) {   // pink/magenta paint blob
+      let nr, ng, nb;
+      if (def.paint === 'rainbow') {
+        // Horizontal rainbow across the sheet so each blob shows a spectrum slice;
+        // keep the source's light/dark structure so it still reads as a wet blob.
+        const px = (i >> 2) % W;
+        const hue = (px * 1.7) % 360;
+        const nl = Math.min(0.72, Math.max(0.42, l > 0.5 ? 0.5 + (l - 0.5) * 0.7 : l * 0.95 + 0.1));
+        [nr, ng, nb] = hslToRgb(hue, 0.88, nl);
+      } else if (def.paint === 'emerald') {
+        // Deep jewel emerald, deliberately DARKER + cooler (teal-leaning) than the
+        // bright spring-green slot, so a green-slot Classic and a Hela brush never
+        // read the same. Compress the blob's lightness into a deep range.
+        const nl = l > 0.5 ? 0.24 + (l - 0.5) * 0.30 : l * 0.5;
+        [nr, ng, nb] = hslToRgb(163, 0.82, Math.min(0.40, nl));
+      } else {
+        // slot: bias saturation toward the slot hue and temper highlights so bright
+        // (yellow) and warm hues read instead of washing into the handle.
+        const ns = Math.min(1, s * 0.45 + targetSat * 0.6);
+        const nl = l > 0.5 ? 0.5 + (l - 0.5) * (1 - 0.45 * targetL) : l;
+        [nr, ng, nb] = hslToRgb(targetHue, ns, nl);
+      }
       d[i] = nr; d[i + 1] = ng; d[i + 2] = nb;
     }
   }
   g.putImageData(img, 0, 0);
-  tintedSheets[slot] = c;
+  tintedSheets[key] = c;
   return c;
 }
 
@@ -1151,13 +1359,13 @@ function spriteDrawHeight(state) {
 }
 
 function drawBrushSprite(x, y, slot, face, dirAngle, speed, isMe, boost, frozen, noPaint, castType, inputActive, paintScale = 1, isEcho = false) {
-  const col = palette[slot] || '#fff';
+  const col = skinInkCss(slot);   // ground glow matches your skin ink (others stay slot-colored)
   const echoMul = isEcho ? 0.5 : 1;   // ghost twin: render the whole sprite translucent
   const state = petState(speed, boost, frozen, noPaint, castType, inputActive);
   const pose = brushPose(state, face, dirAngle);
   const st = PET.states[state] || PET.states.idle;
   const rowSt = PET.states[pose.rowState] || st;
-  const ts = getTintedSheet(slot);
+  const ts = getTintedSheet(skinForSlot(slot), slot);
   if (!ts) return;
   // Brush-size powerups (mega/tiny) visibly grow/shrink the spirit to match its
   // brush -- near-linear so it reads clearly, lightly damped + clamped so it never
@@ -1691,7 +1899,7 @@ function updateRankBar() {
       ? '<img class="lb-crown" src="/assets/crown.png" alt="leader">'
       : `<span class="lb-rank">${i + 1}</span>`;
     el.className = 'lb-item' + (isMe ? ' me' : '');
-    el.innerHTML = `${badge}<span class="swatch" style="background:${palette[slot]}"></span><span class="lb-name">${escapeHtml(nm)}</span><span class="lb-pct">${pct}%</span>`;
+    el.innerHTML = `${badge}<span class="swatch" style="background:${skinSwatchCss(slot)}"></span><span class="lb-name">${escapeHtml(nm)}</span><span class="lb-pct">${pct}%</span>`;
     (i < mid ? els.rankLeft : els.rankRight).appendChild(el);
   });
   for (const [slot, el] of [...rankChips]) {
@@ -1851,8 +2059,8 @@ function showResults(msg, won) {
     const barPct = Math.max(8, Math.min(100, relativePct));
     const meCls = r.slot === mySlot && !spectating ? ' me' : '';
     const name = slotNames[r.slot] || `P${r.slot + 1}`;
-    return `<div class="result-row${meCls}" style="--bar-color:${palette[r.slot]};--pct:${barPct}%">
-      <span class="swatch" style="background:${palette[r.slot]}"></span>
+    return `<div class="result-row${meCls}" style="--bar-color:${skinInkCss(r.slot)};--pct:${barPct}%">
+      <span class="swatch" style="background:${skinSwatchCss(r.slot)}"></span>
       <span class="score-name">${escapeHtml(name)}</span>
       <span class="result-bar" aria-hidden="true"><span></span></span>
       <span class="score-pct">${pct}%</span>
@@ -1888,6 +2096,7 @@ function frame(t) {
   const dt = Math.min(0.05, gap / 1000);
   lastFrame = t;
   nowMs = t;
+  syncSkinLock();   // keep the skin picker enabled only on the landing while idle (idempotent)
   // In a match: the full netcode pipeline. On the landing: the local
   // single-brush tutorial sim instead (no network, same renderer).
   if (!inMenu) {
@@ -2155,6 +2364,55 @@ function stepSimPlayers(d) {
 if (els.playersDec) els.playersDec.addEventListener('click', () => stepSimPlayers(-1));
 if (els.playersInc) els.playersInc.addEventListener('click', () => stepSimPlayers(1));
 syncPlayersUI();
+
+// Brush skin picker: the gear dropdown's left/right stepper. The swatch is a quick
+// read of each skin's paint identity. Classic is a simple solid red (it doesn't
+// paint a rainbow -- it uses your plain slot color), the customs preview their texture.
+const PICKER_SWATCH = {
+  default: '#ff4d6d',
+  unicorn: SKIN_SWATCH_CSS.unicorn,
+  hela: SKIN_SWATCH_CSS.hela,
+};
+const skinRow = els.skinPrev ? els.skinPrev.closest('.settings-row-skin') : null;
+function syncSkinUI() {
+  const def = skinDef(mySkin);
+  if (els.skinLabel) els.skinLabel.textContent = def.label;
+  if (els.skinSwatch) els.skinSwatch.style.background = PICKER_SWATCH[def.id] || '#ff4d6d';
+}
+// Your skin is chosen on the landing and then committed for the match (it ships in
+// the connect query, so the very first roster already shows you correctly). Changing
+// it is locked once a round is actively painting, and locked entirely in multiplayer
+// -- a mid-round swap would two-tone your own territory and is never networked live.
+function skinChangeAllowed() {
+  return inMenu && phase !== 'active';
+}
+let lastSkinLock = null;
+function syncSkinLock() {
+  const locked = !skinChangeAllowed();
+  if (locked === lastSkinLock) return;     // idempotent: only touch the DOM on a change
+  lastSkinLock = locked;
+  if (skinRow) skinRow.classList.toggle('locked', locked);
+  if (els.skinPrev) els.skinPrev.disabled = locked;
+  if (els.skinNext) els.skinNext.disabled = locked;
+}
+// Apply a skin to the local player. persist -> localStorage; the render picks it up
+// immediately via skinForSlot(mySlot). Purely local: never networked.
+function applySkin(id) {
+  mySkin = SKINS[id] ? id : DEFAULT_SKIN;
+  if (Store && Store.setSkin) Store.setSkin(mySkin);
+  syncSkinUI();
+}
+function cycleSkin(d) {
+  if (!skinChangeAllowed()) return;        // belt-and-suspenders behind the disabled buttons
+  const i = SKIN_ORDER.indexOf(mySkin);
+  const next = SKIN_ORDER[((i < 0 ? 0 : i) + d + SKIN_ORDER.length) % SKIN_ORDER.length];
+  applySkin(next);
+}
+if (els.skinPrev) els.skinPrev.addEventListener('click', () => cycleSkin(-1));
+if (els.skinNext) els.skinNext.addEventListener('click', () => cycleSkin(1));
+syncSkinUI();
+syncSkinLock();
+
 if (els.settingsMenu) els.settingsMenu.addEventListener('click', (e) => e.stopPropagation());
 
 // Power-up legend popover (landing top right).
@@ -3078,6 +3336,8 @@ function simStart() {
     paletteRGB = palette.map(hexToRGB);
   }
   mySlot = Math.floor(Math.random() * palette.length);   // fresh color each visit
+  // The sim showcases the chosen skin on the visitor's brush; bots keep the classic
+  // skin automatically (skinForSlot only skins mySlot, every other slot is default).
   spectating = false;
   // Wait in the match's countdown semantics: paint is held and the bobbing
   // "you" arrow marks the visitor's brush until their first directional input

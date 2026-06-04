@@ -587,6 +587,7 @@ html, body {
   line-height: 1.35;
   margin-top: 0;
 }
+
 /* Quick chat: a tiny strip in the board's bottom-right corner (mirrors the
    spectate banner's bottom-left footprint). Deliberately small -- messages are
    server-capped at 10 words -- and the whole panel fades to near-invisible when
@@ -866,7 +867,7 @@ body.in-menu #topbar .stats:empty { display: none; }
   position: absolute;
   top: 46px;
   left: 8px;
-  width: 210px;
+  width: 220px;
   display: flex;
   flex-direction: column;
   gap: 9px;
@@ -893,6 +894,17 @@ body.in-menu .settings-row-players { display: flex; }
 .stepper-btn:hover { background: rgba(255, 255, 255, 0.16); }
 .stepper-btn:disabled { opacity: 0.3; cursor: default; }
 .stepper-val { min-width: 16px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
+/* Skin picker -- a stepper like Players, but with a live paint-preview swatch + a
+   word label. Arrows sit at the row edges (space-between) and the swatch+label
+   size to content so the whole control stays inside the popover. Picker is locked
+   off the landing / during active play (see syncSkinLock). */
+.stepper-skin { justify-content: space-between; }
+.stepper-val-skin { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; }
+.skin-swatch { width: 16px; height: 16px; border-radius: 5px; flex: none; background: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 1px 2px rgba(0, 0, 0, 0.45); }
+#skin-label { font-weight: 700; font-size: 12px; letter-spacing: 0.01em; white-space: nowrap; }
+/* Locked picker: dim the whole row and show arrows as unavailable. */
+.settings-row-skin.locked { opacity: 0.5; }
+.settings-row-skin.locked .stepper-btn { cursor: default; pointer-events: none; }
 .settings-btn-sm {
   appearance: none; border: 1px solid var(--st-border-strong); background: transparent;
   color: var(--st-fg); font: inherit; font-size: 12px; font-weight: 600;
